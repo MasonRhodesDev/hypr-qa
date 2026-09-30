@@ -1,8 +1,7 @@
 # Scenario schema (v0 draft)
 
 Status: **draft, published early so consumers can write against it.** The shape is
-stable; the timing numbers (frame rate, how close an offset can be resolved) are
-pending the recording spike and will be filled in here. Breaking changes before v1
+stable; timing numbers are from the recording spike (see "Timing resolution"). Breaking changes before v1
 will be called out in this file's changelog.
 
 A scenario is one TOML file. `hypr-qa run SCENARIO.toml` boots (or restores) a guest,
@@ -112,10 +111,26 @@ exact-color checks.
 
 ### The cursor
 
-The pointer is drawn into recorded frames only if Hyprland uses a software cursor.
-With a hardware cursor plane, the screen capture omits it. Scenarios that check the cursor must set
-`[guest] hyprland = { cursor = { no_hardware_cursors = true } }`. *(Pending the spike:
-whether this is required and sufficient.)*
+In the spike guest (Hyprland 0.56.2, `-vga virtio`, llvmpipe), Hyprland never used the
+cursor plane. The pointer was in every recorded frame, with `no_hardware_cursors` both true and false.
+A guest that does put the cursor on the hardware plane would drop it from every frame.
+So `hypr-qa` asserts before a scenario runs that the guest's DRM cursor plane has no
+framebuffer (`/sys/kernel/debug/dri/0/state`). Setting
+`[guest] hyprland = { cursor = { no_hardware_cursors = true } }` stays as a harmless belt-and-braces.
+
+## Timing resolution
+
+Measured on mason-desktop (spike, 2026-09-30; 3 reps per cell, guest under software GL):
+
+- Frames are captured at **30 fps** (QMP `screendump` as PPM, on a recorder-only QMP socket).
+  Frame intervals: median 33.4 ms, max 36 ms. Each frame's host timestamp is accurate to about 5 ms.
+- So an `at` offset resolves to within **one frame (about 33 ms)**. For anything shorter than about
+  100 ms, use a window rather than a single offset.
+- From an input event to its first visible frame: pointer 14-34 ms. For keyboard, the guest's
+  USB keyboard autosuspends after 2 s idle, which adds about 100 ms to the next key press. The profiles
+  disable that autosuspend, so key latency stays around 30-50 ms.
+- When the guest's display output is off (DPMS, some lock states), QEMU returns a
+  placeholder frame; the recorder marks those frames `inactive`, and checks on them are errors.
 
 ## Output
 
@@ -138,3 +153,4 @@ Exit code: `0` all passed, `1` a check failed, `2` an error (boot, action, or un
 - v0.1 (2026-09-30): `[guest] hyprland` is a nested table given to `hl.config()` through
   `hyprctl eval`, because Hyprland 0.56 (Lua config) rejects `hyprctl keyword`. `vmkit keys`
   takes one qcode per argument, so write `meta_l ret`, not `super-ret`.
+- v0.2 (2026-09-30): timing resolution and cursor findings from the recording spike.
