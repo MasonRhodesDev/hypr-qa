@@ -74,9 +74,23 @@ It caches the newest cloud image, creates a fresh overlay and seed, boots
 through `vmkit up`, and waits for the provisioning service
 (`/var/lib/hypr-qa/status`, log at `/var/log/hypr-qa-provision.log`). Then it
 reboots into the autologin session, waits for `hyprctl monitors` to answer,
-checks 1280x800 and an empty `hyprctl configerrors`, and waits for a stable
-frame. Last, it saves `session-ready` and shuts the VM down. A build replaces
+checks 1280x800 and an empty `hyprctl configerrors`, and checks the pointer
+(below). Then it waits for a stable frame. Last, it saves `session-ready` and shuts the VM down. A build replaces
 the previous overlay and its snapshots.
+
+The pointer check fails the build when the pointer on screen is not the
+session theme's. It reads `XCURSOR_THEME`/`XCURSOR_SIZE` from a process
+Hyprland spawns (they must be `CURSOR_THEME`/`CURSOR_SIZE` from `profile.env`),
+copies `/usr/share/icons/$CURSOR_THEME/cursors/left_ptr` out of the guest,
+moves the pointer to (640, 400) and compares a screendump with that image
+composited over the background, allowing a 1 px offset.
+[`check-pointer`](check-pointer) does the comparison (stdlib Python, no
+model); it names Hyprland's built-in fallback pointer (a 25x31 shape at the
+hotspot minus (3, 2)) when that is what's on screen. By hand:
+
+```sh
+check-pointer SHOT.png X Y LEFT_PTR_XCURSOR_FILE SIZE   # exit 0 match, 1 mismatch, 2 bad input
+```
 
 Timings on mason-desktop (2026-09-30, base image cached): about 105 s in all.
 Of that, 50 s is the first boot to ssh (the cloud image's sshd waits for

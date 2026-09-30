@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""check-pointer — is the pointer in a screendump a given XCursor image?
+
+    check-pointer SHOT X Y XCURSOR_FILE SIZE
+
+SHOT is a screendump (PNG 8-bit RGB/RGBA, or PPM P6) with the pointer's
+hotspot at (X, Y). XCURSOR_FILE is the theme's cursor file (for example
+/usr/share/icons/Adwaita/cursors/left_ptr, copied from the guest) and SIZE its
+nominal size. The image of the nearest nominal size is composited over the
+background next to the pointer and compared with the screen, pixel by pixel,
+over the pixels where the cursor shows (allowing a 1 px offset: QMP absolute
+coordinates can round).
+
+Exit 0: the pointer matches. 1: it does not (no pointer, Hyprland's built-in
+fallback pointer, or another image). 2: bad arguments or unreadable input.
+Model-free and stdlib only.
+"""
+import struct
+import sys
+import zlib
+
+TOLERANCE = 24          # per channel, after compositing
+MIN_AGREEMENT = 0.9     # fraction of the cursor's visible pixels that must match
+# Hyprland's built-in XCursor fallback (32x32 buffer, hotspot 3,2) draws a
+# 25x31 shape whose top-left is at the hotspot minus (3, 2).
+FALLBACK_BBOX = (25, 31, -3, -2)
+
+
+def read_image(path):
+    """-> (width, height, rows of (r, g, b) tuples)"""
+    data = open(path, "rb").read()
+    if data.startswith(b"P6"):
+        return read_ppm(data)
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return read_png(data)
+    raise ValueError("not a PNG or PPM (P6) file")
+
+
+def read_ppm(data):
+    fields, pos = [], 2
+    while len(fields) < 3:
+        while data[pos:pos + 1].isspace():
+            pos += 1
+        if data[pos:pos + 1] == b"#":
+            pos = data.index(b"\n", pos)
+            continue
+        end = pos
+        while not data[end:end + 1].isspace():
+            end += 1
+        fields.append(int(data[pos:end]))
+        pos = end
+    w, h, maxval = fields
+    if maxval != 255:
+        raise ValueError("PPM maxval %d unsupported" % maxval)
+    px = data[pos + 1:pos + 1 + w * h * 3]
+    return w, h, [[tuple(px[(y * w + x) * 3:(y * w + x) * 3 + 3]) for x in range(w)] for y in range(h)]
+
+
+def read_png(data):
+    pos, idat, w = 8, b"", None
+    while pos < len(data):
+        length, ctype = struct.unpack(">I4s", data[pos:pos + 8])
+        chunk = data[pos + 8:pos + 8 + length]
+        pos += 12 + length
+        if ctype == b"IHDR":
+            w, h, depth, color, _, _, interlace = struct.unpack(">IIBBBBB", chunk)
+            if depth != 8 or color not in (2, 6) or interlace:
+                raise ValueError("PNG must be 8-bit RGB/RGBA, non-interlaced (depth %d, colour type %d)" % (depth, color))
+            bpp = 3 if color == 2 else 4
+        elif ctype == b"IDAT":
+            idat += chunk
+        elif ctype == b"IEND":
+            break
+    if w is None:
+        raise ValueError("PNG without IHDR")
+    raw = zlib.decompress(idat)
+    stride = w * bpp
+    rows, prev = [], bytearray(stride)
+    for y in range(h):
+        f = raw[y * (stride + 1)]
+        line = bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for i in range(stride):
+            a = line[i - bpp] if i >= bpp else 0
+            b = prev[i]
+            c = prev[i - bpp] if i >= bpp else 0
+            if f == 1:
+                line[i] = (line[i] + a) & 255
+            elif f == 2:
+                line[i] = (line[i] + b) & 255
+            elif f == 3:
+                line[i] = (line[i] + (a + b) // 2) & 255
+            elif f == 4:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+            elif f != 0:
+                raise ValueError("bad PNG filter %d" % f)
+        rows.append([tuple(line[x * bpp:x * bpp + 3]) for x in range(w)])
+        prev = line
+    return w, h, rows
+
+
+def read_xcursor(path, size):
+    """-> (width, height, xhot, yhot, premultiplied ARGB ints) of the first image of the nominal size closest to SIZE"""
+    data = open(path, "rb").read()
+    magic, _, _, ntoc = struct.unpack("<4sIII", data[:16])
+    if magic != b"Xcur":
+        raise ValueError("%s is not an Xcursor file" % path)
+    toc = [struct.unpack("<III", data[16 + 12 * i:28 + 12 * i]) for i in range(ntoc)]
+    images = [(sub, off) for typ, sub, off in toc if typ == 0xFFFD0002]
+    if not images:
+        raise ValueError("%s has no images" % path)
+    best = min({sub for sub, _ in images}, key=lambda s: abs(s - size))
+    off = next(o for s, o in images if s == best)
+    _, typ, _, _, w, h, xhot, yhot, _ = struct.unpack("<9I", data[off:off + 36])
+    pixels = struct.unpack("<%dI" % (w * h), data[off + 36:off + 36 + 4 * w * h])
+    return w, h, xhot, yhot, pixels
+
+
+def over(argb, bg):
+    a = argb >> 24
+    return tuple(min(255, ((argb >> s) & 255) + bg[i] * (255 - a) // 255) for i, s in enumerate((16, 8, 0)))
+
+
+def near(p, q, tol=TOLERANCE):
+    return max(abs(a - b) for a, b in zip(p, q)) <= tol
+
+
+def bbox(rows, W, H, x0, y0, x1, y1, bg):
+    """bbox (w, h, left, top) of pixels differing from bg in [x0,x1)x[y0,y1), or None"""
+    pts = [(x, y) for y in range(max(0, y0), min(H, y1)) for x in range(max(0, x0), min(W, x1))
+           if not near(rows[y][x], bg, 12)]
+    if not pts:
+        return None
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    return max(xs) - min(xs) + 1, max(ys) - min(ys) + 1, min(xs), min(ys), len(pts)
+
+
+def check(shot, x, y, xcursor, size):
+    W, H, rows = read_image(shot)
+    cw, ch, hx, hy, pixels = read_xcursor(xcursor, size)
+    bg = rows[max(0, y - hy - 8)][max(0, x - hx - 8)]
+    want = [(i % cw, i // cw, over(p, bg)) for i, p in enumerate(pixels)]
+    visible = [(i, j, c) for i, j, c in want if not near(c, bg, 12)]
+    if not visible:
+        raise ValueError("the cursor image is invisible on background %s" % (bg,))
+    best = (-1.0, 0, 0)
+    for dy in (0, -1, 1):
+        for dx in (0, -1, 1):
+            ox, oy = x - hx + dx, y - hy + dy
+            ok = sum(1 for i, j, c in visible
+                     if 0 <= ox + i < W and 0 <= oy + j < H and near(rows[oy + j][ox + i], c))
+            best = max(best, (ok / len(visible), dx, dy))
+    frac, dx, dy = best
+    desc = "%dx%d image, hotspot %d,%d, %d visible px" % (cw, ch, hx, hy, len(visible))
+    if frac >= MIN_AGREEMENT:
+        return True, "pointer matches %s size %d (%s): %.0f%% at offset %+d,%+d" % (xcursor, size, desc, 100 * frac, dx, dy)
+    box = bbox(rows, W, H, x - 16, y - 16, x + 48, y + 48, bg)
+    if box is None:
+        seen = "no pointer near (%d, %d)" % (x, y)
+    else:
+        bw, bh, left, top, n = box
+        seen = "shape %dx%d at %+d,%+d from the hotspot, %d px" % (bw, bh, left - x, top - y, n)
+        if (bw, bh) == FALLBACK_BBOX[:2] and abs(left - x - FALLBACK_BBOX[2]) <= 1 and abs(top - y - FALLBACK_BBOX[3]) <= 1:
+            seen += ": Hyprland's built-in fallback pointer (no cursor theme loaded)"
+    return False, "pointer does not match %s size %d (%s): best %.0f%%; screen has %s" % (xcursor, size, desc, 100 * frac, seen)
+
+
+def main(argv):
+    if len(argv) != 6:
+        print(__doc__.strip().split("\n\n")[1], file=sys.stderr)
+        return 2
+    try:
+        ok, msg = check(argv[1], int(argv[2]), int(argv[3]), argv[4], int(argv[5]))
+    except (OSError, ValueError, struct.error, zlib.error) as e:
+        print("check-pointer: %s" % e, file=sys.stderr)
+        return 2
+    print(msg)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

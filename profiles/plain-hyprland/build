@@ -10,7 +10,8 @@
 # 4. first boot via `vmkit up`: cloud-init creates user qa and starts the
 #    provisioning service (full upgrade, hyprland/foot/fonts/greetd, config)
 # 5. reboot into greetd autologin -> Hyprland, wait for the session
-# 6. check the session (1280x800, no config errors), let the screen settle,
+# 6. check the session (1280x800, no config errors, the pointer is the
+#    cursor theme's), let the screen settle,
 #    save the `session-ready` snapshot, shut down
 #
 # Destroys any previous overlay (and its snapshots); keeps cached base images.
@@ -176,6 +177,21 @@ usb=$("$VM" ssh 'for d in /sys/bus/usb/devices/*; do [ -f "$d/product" ] && echo
 printf '%s\n' "$usb" | sed 's/^/   usb /'
 printf '%s\n' "$usb" | grep -q 'Keyboard: active$' || die "USB keyboard is not runtime-active after 6 s idle"
 ! printf '%s\n' "$usb" | grep -q ': suspended$' || die "a USB device runtime-suspended despite the udev rule"
+# The pointer must be the session theme's left_ptr, not Hyprland's built-in
+# fallback (drawn when no cursor theme loads): the env clients inherit, then a
+# screendump at a known position against the theme's own image.
+r=$("$VM" session hyprctl dispatch 'hl.dsp.exec_cmd("printenv XCURSOR_THEME XCURSOR_SIZE >/tmp/hypr-qa-xcursor-env")')
+[ "$r" = ok ] || die "hyprctl dispatch exec_cmd replied: $r"
+sleep 1
+xenv=$("$VM" ssh 'cat /tmp/hypr-qa-xcursor-env 2>/dev/null; rm -f /tmp/hypr-qa-xcursor-env' | tr '\n' ' ')
+echo "   session XCURSOR_THEME XCURSOR_SIZE: $xenv"
+[ "$xenv" = "$CURSOR_THEME $CURSOR_SIZE " ] || die "session cursor env is '$xenv', want '$CURSOR_THEME $CURSOR_SIZE'"
+"$VM" ssh "base64 -w0 /usr/share/icons/$CURSOR_THEME/cursors/left_ptr" | base64 -d >"$VMKIT_DIR/left_ptr.xcursor" \
+    || die "no /usr/share/icons/$CURSOR_THEME/cursors/left_ptr in the guest"
+"$VM" move 640 400 >/dev/null; sleep 0.5
+"$VM" shot pointer-check >/dev/null || die "screendump failed"
+python3 "$HERE/check-pointer" "$VMKIT_DIR/pointer-check.png" 640 400 "$VMKIT_DIR/left_ptr.xcursor" "$CURSOR_SIZE" \
+    | sed 's/^/   /' || die "the pointer is not $CURSOR_THEME's left_ptr (see $VMKIT_DIR/pointer-check.png)"
 "$VM" wait screen 60 3 >/dev/null || echo "   (screen did not settle within 60 s; snapshotting anyway)"
 
 phase "snapshot"
