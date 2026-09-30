@@ -276,6 +276,38 @@ class RunnerE2E(unittest.TestCase):
         res = json.load(open(os.path.join(runs, os.listdir(runs)[0], "results.json")))
         self.assertTrue(any("terminated" in e for e in res["errors"]), res["errors"])
 
+    def test_sigterm_after_the_steps_does_not_cut_cleanup_or_results(self):
+        seen = {}
+        orig_stop, orig_eval = runner.Runner.record_stop, runner.evaluate
+
+        def term_in_record_stop(r):
+            seen["r"] = r
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(0.1)
+            return orig_stop(r)
+
+        def term_in_evaluate(*a):
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(0.1)
+            return orig_eval(*a)
+        for name, patch in (("record_stop", mock.patch.object(runner.Runner, "record_stop", term_in_record_stop)),
+                            ("evaluate", mock.patch.object(runner, "evaluate", term_in_evaluate))):
+            with self.subTest(name):
+                open(os.path.join(self.state, "calls.log"), "w").close()
+                with patch:
+                    r = runner.Runner(self.scn, profiles_dir=os.path.join(HERE, "fake_profiles"))
+                    code = r.main()
+                self.assertEqual(code, 2)
+                self.assertIsNotNone(r.serve.p.poll(), "hyprhands serve left running")
+                self.assertIn("record stop", open(os.path.join(self.state, "calls.log")).read())
+                self.assertFalse(os.path.exists(os.path.join(self.state, "record.run")), "recorder left running")
+                for f in ("run.json", "results.json"):
+                    res = json.load(open(os.path.join(r.run_dir, f)))
+                    self.assertEqual(sum("terminated" in e for e in res["errors"]), 1, (f, res["errors"]))
+                res = json.load(open(os.path.join(r.run_dir, "results.json")))
+                self.assertEqual((res["status"], res["exit"]), ("error", 2))
+                self.assertTrue(res["expectations"], "checks were not run")
+
     def test_hyprctl_ok_reply_commands_need_ok(self):
         code, run = self.run_it('name="h"\nprofile="fake"\n[[step]]\nid="kw"\n'
                                 'do={hyprctl=["keyword", "general:gaps_in", "0"]}\n'

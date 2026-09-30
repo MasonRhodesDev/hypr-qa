@@ -84,12 +84,7 @@ class RunError(Exception):
 
 
 class Terminated(BaseException):
-    """SIGTERM, raised in the main thread so the run takes its normal cleanup path."""
-
-
-def _on_sigterm(signum, frame):
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)   # once: let the cleanup finish
-    raise Terminated()
+    """SIGTERM during the run's phases, raised in the main thread so the run takes its cleanup path."""
 
 
 class VM:
@@ -198,6 +193,8 @@ class Runner:
         self.recording = False
         self.record_attempted = False   # record start was run (it may have started the recorder)
         self.traceback = None     # an unexpected exception's, if any
+        self.terminated = False   # a SIGTERM arrived
+        self._raise_on_term = False   # only while boot..cover_tail runs: never into cleanup or checks
         self.actions_path = os.path.join(self.run_dir, "actions.jsonl")
 
     # -- bookkeeping
@@ -411,8 +408,20 @@ class Runner:
         if wait > 0:
             time.sleep(wait)
 
+    def _on_sigterm(self, signum, frame):
+        self.terminated = True
+        if self._raise_on_term:
+            self._raise_on_term = False
+            raise Terminated()
+
+    def _note_terminated(self):
+        if self.terminated and "terminated (SIGTERM)" not in self.errors:
+            self.error("terminated (SIGTERM)")
+            return True
+        return False
+
     def main(self):
-        old = signal.signal(signal.SIGTERM, _on_sigterm)
+        old = signal.signal(signal.SIGTERM, self._on_sigterm)
         try:
             return self._main()
         finally:
@@ -424,23 +433,27 @@ class Runner:
         for m in missing:
             self.error(f"template image not found: {m}")
         try:
-            if missing:
-                raise RunError("missing template images")
-            self.boot()
-            self.apply_guest()
-            self.setup()
-            self.start_serve()
-            self.precheck()
-            self.record_start()
-            time.sleep(self.lead_in_s())
-            self.run_steps()
-            self.cover_tail()
+            try:
+                self._raise_on_term = True
+                if missing:
+                    raise RunError("missing template images")
+                self.boot()
+                self.apply_guest()
+                self.setup()
+                self.start_serve()
+                self.precheck()
+                self.record_start()
+                time.sleep(self.lead_in_s())
+                self.run_steps()
+                self.cover_tail()
+            finally:
+                self._raise_on_term = False   # from here a SIGTERM is only noted: cleanup and results complete
         except RunError as e:
             self.error(str(e))
         except KeyboardInterrupt:
             self.error("interrupted")
         except Terminated:
-            self.error("terminated (SIGTERM)")
+            self._note_terminated()
         except Exception as e:   # a runner bug: still an error run (exit 2) with results.json
             self.traceback = traceback.format_exc()
             self.vm.log(f"unexpected error:\n{self.traceback}")
@@ -448,8 +461,18 @@ class Runner:
         finally:
             self.record_stop()
             self.stop_serve()
+            self._note_terminated()
             self.save_state()
         code = evaluate(self.run_dir, self.doc, self.sdir, self.vm)
+        if self._note_terminated():   # arrived during the checks: amend what evaluate wrote
+            self.save_state()
+            path = os.path.join(self.run_dir, "results.json")
+            res = json.load(open(path))
+            res["errors"].append(self.errors[-1])
+            res.update(status="error", exit=EXIT_ERROR)
+            write_json(path, res)
+            print(f"error  {self.errors[-1]} during the checks: the run is an error")
+            code = EXIT_ERROR
         if self.down:
             self.vm.run("down", timeout=120)
             say("vm down")
