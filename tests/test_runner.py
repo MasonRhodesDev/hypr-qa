@@ -7,8 +7,9 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
-from hypr_qa import runner
+from hypr_qa import cli, runner
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 VMKIT = os.environ.get("VMKIT") or os.path.expanduser("~/repos/vmkit/bin/vmkit")
@@ -70,6 +71,13 @@ settle_ms = 200
 id = "hh-capture"
 do = {{ hyprhands = {{ op = "capture", size = 64 }} }}
 """
+
+
+class CliUnexpected(unittest.TestCase):
+    def test_unexpected_exception_exits_2(self):
+        with mock.patch.object(runner, "check_run", side_effect=KeyError("x")), \
+                mock.patch("sys.stderr"):
+            self.assertEqual(cli.main(["check", "/nonexistent"]), 2)
 
 
 class LeadIn(unittest.TestCase):
@@ -186,6 +194,17 @@ class RunnerE2E(unittest.TestCase):
         self.assertEqual(code, 0)
         res = json.load(open(os.path.join(run, "results.json")))
         self.assertEqual(res["steps"][0]["stdout"], "x\ufffd\ufffd")
+
+    def test_unexpected_exception_is_an_error_with_results(self):
+        with mock.patch.object(runner.Runner, "run_steps", side_effect=ValueError("boom")):
+            code, run = self.run_it()
+        self.assertEqual(code, 2)
+        res = json.load(open(os.path.join(run, "results.json")))
+        self.assertTrue(any("ValueError: boom" in e for e in res["errors"]), res["errors"])
+        state = json.load(open(os.path.join(run, "run.json")))
+        self.assertIn("Traceback", state["traceback"])
+        self.assertIn("ValueError: boom", open(os.path.join(run, "runner.log")).read())
+        self.assertIn("record stop", open(os.path.join(self.state, "calls.log")).read())
 
     def test_failed_action_and_stop_on_fail(self):
         os.environ["FAKE_VM_FAIL"] = "meta_l"

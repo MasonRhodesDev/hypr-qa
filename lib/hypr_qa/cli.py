@@ -9,6 +9,7 @@ precheck, setup, a failed action, an unresolvable window).
 """
 import argparse
 import sys
+import traceback
 
 from . import runner
 from .lua import LuaError
@@ -46,4 +47,8 @@ def main(argv=None):
         return 2
     except OSError as e:
         print(f"hypr-qa: {e}", file=sys.stderr)
+        return 2
+    except Exception:   # a bug, never "check failed" (1) or a pass
+        traceback.print_exc()
+        print("hypr-qa: unexpected error (exit 2)", file=sys.stderr)
         return 2

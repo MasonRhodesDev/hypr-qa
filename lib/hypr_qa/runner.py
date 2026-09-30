@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 
 from . import lua, proto
 from . import scenario as S
@@ -173,6 +174,7 @@ class Runner:
         self.skipped = []
         self.serve = None
         self.recording = False
+        self.traceback = None     # an unexpected exception's, if any
         self.actions_path = os.path.join(self.run_dir, "actions.jsonl")
 
     # -- bookkeeping
@@ -186,6 +188,7 @@ class Runner:
             "snapshot": self.doc.get("snapshot"), "scenario_file": self.path, "run_dir": self.run_dir,
             "recorded": self.recording or os.path.exists(os.path.join(self.run_dir, "frames.jsonl")),
             "errors": self.errors, "steps": self.steps, "skipped": self.skipped,
+            "traceback": self.traceback,
         })
 
     # -- phases
@@ -384,6 +387,10 @@ class Runner:
             self.error(str(e))
         except KeyboardInterrupt:
             self.error("interrupted")
+        except Exception as e:   # a runner bug: still an error run (exit 2) with results.json
+            self.traceback = traceback.format_exc()
+            self.vm.log(f"unexpected error:\n{self.traceback}")
+            self.error(f"unexpected error: {type(e).__name__}: {e} (traceback in run.json)")
         finally:
             self.record_stop()
             if self.serve:
