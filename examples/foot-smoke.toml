@@ -1,0 +1,52 @@
+# Smoke test for the runner itself: vmkit input and session steps only, no hyprhands.
+# Opens foot with the stock SUPER+Q bind, types a command line, and checks the
+# recorded frames: something changed where foot opened, the typed text is
+# readable (OCR), and a negative control that must never match.
+#
+#   bin/hypr-qa run examples/foot-smoke.toml
+
+name    = "foot-smoke"
+profile = "plain-hyprland"
+
+[[step]]
+id = "no-windows"                  # the restored session has no clients
+do = { session = "! hyprctl clients | grep -q 'class:'" }
+
+[[step]]
+id = "hyprctl-version"
+do = { hyprctl = ["version"] }
+
+[[step]]
+id = "open-foot"
+do = { vmkit = ["keys", "meta_l", "q"] }
+settle_ms = 1500                   # foot starts under llvmpipe
+
+  [[step.expect]]                  # the window appeared where the prompt will be
+  at = "+100ms..+1200ms"
+  check = "changed"
+  region = [22, 22, 600, 120]
+  min_px = 1000
+
+[[step]]
+id = "foot-mapped"
+do = { session = "hyprctl clients | grep -q 'class: foot'" }
+
+[[step]]
+id = "type"
+do = { vmkit = ["type", "echo smoke test done"] }
+settle_ms = 1300
+
+  [[step.expect]]                  # typing renders over ~400 ms in the guest
+  at = "+300ms..+1200ms"
+  anchor = "ack"
+  check = "ocr"
+  region = [22, 22, 1236, 120]
+  text = "echo smoke test"      # not the last word: foot's block cursor sits against it
+
+  [[step.expect]]                  # negative control: never on screen in the window
+  at = "+300ms..+1200ms"
+  anchor = "ack"
+  check = "ocr"
+  region = [22, 22, 1236, 120]
+  text = "zebra quartz wombat"
+  not = true

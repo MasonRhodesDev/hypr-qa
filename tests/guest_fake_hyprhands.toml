@@ -1,0 +1,73 @@
+# Guest plumbing test for the [hyprhands] path, without the real binary: pushes
+# tests/fake_hyprhands_serve.py into the guest and runs it as the serve, over ssh
+# in the Hyprland session, so every request crosses the same framing and ssh
+# pipe a real `hyprhands serve` would. The fake draws nothing; the checks only
+# prove that each request got an anchor in actions.jsonl.
+#
+#   bin/hypr-qa run tests/guest_fake_hyprhands.toml
+
+name    = "guest-fake-hyprhands"
+profile = "plain-hyprland"
+
+[[setup]]
+push = { src = "fake_hyprhands_serve.py", dst = "/usr/local/bin/fake-hyprhands", mode = "0755" }
+
+[[setup]]
+session = "command -v python3 && test -x /usr/local/bin/fake-hyprhands"
+
+[hyprhands]
+argv = ["fake-hyprhands"]
+
+[[step]]
+id = "hh-state"
+do = { hyprhands = { op = "state" } }
+
+  [[step.expect]]                  # the fake draws nothing: the top edge stays free of overlay blue
+  at = "+0ms..+300ms"
+  anchor = "ack"
+  check = "pixel"
+  region = [0, 0, 0, 4]
+  color = "#00b4ff"
+  tolerance = 40
+  min_fraction = 0.5
+  not = true
+
+[[step]]
+id = "hh-click"
+do = { hyprhands = { op = "click", x = 640, y = 400 } }
+
+  [[step.expect]]
+  at = "-100ms..+200ms"
+  anchor = "ack"
+  check = "changed"
+  region = [600, 360, 80, 80]
+  min_px = 50
+  not = true
+
+[[step]]
+id = "hh-capture"
+do = { hyprhands = { op = "capture", size = 1048576 } }
+
+  [[step.expect]]
+  at = "+0ms"
+  anchor = "ack"
+  check = "changed"
+  region = [0, 0, 0, 0]
+  min_px = 500
+  not = true
+
+[[step]]
+id = "hh-slow"
+do = { hyprhands = { op = "sleep", ms = 250 } }
+
+  [[step.expect]]                  # anchored on ack: 250 ms after send
+  at = "+0ms"
+  anchor = "ack"
+  check = "changed"
+  region = [0, 0, 0, 0]
+  min_px = 500
+  not = true
+
+[[step]]
+id = "pause"
+do = { wait_ms = 200 }
