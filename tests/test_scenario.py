@@ -51,6 +51,15 @@ class At(unittest.TestCase):
             doc(expect='at = "300ms"\ncheck = "changed"\nregion = [0, 0, 10, 10]\n')
 
 
+    def test_lead_in_floor_is_30_s(self):
+        for at in ("-30s", "-30s..+0ms", "-30000ms"):
+            with self.subTest(at=at):
+                doc(expect=f'at = "{at}"\ncheck = "changed"\nregion = [0, 0, 10, 10]\n')
+        for at in ("-30.001s", "-3600s", "-3600s..+0ms", "-31000ms..-30s"):
+            with self.subTest(at=at), self.assertRaisesRegex(S.ScenarioError, r"expect\[1\]: at: .* -30s"):
+                doc(expect=f'at = "{at}"\ncheck = "changed"\nregion = [0, 0, 10, 10]\n')
+
+
 class Validate(unittest.TestCase):
     def test_examples_validate(self):
         for f in sorted(os.listdir(os.path.join(REPO, "examples"))):

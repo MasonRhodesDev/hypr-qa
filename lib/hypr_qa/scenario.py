@@ -20,6 +20,8 @@ PUSH_PATH_RE = re.compile(r"^[A-Za-z0-9._/@:+,=-]+$")
 # accepted here is accepted there: a signed offset with a unit, or a window a..b.
 _OFFSET = re.compile(r"^([+-])(\d+(?:\.\d+)?)(ms|s)$")
 _UNIT_NS = {"ms": 1_000_000, "s": 1_000_000_000}
+# The run records this long (at most) before step 1 so negative offsets have frames: cap it.
+MIN_OFFSET_NS = -30 * 1_000_000_000
 
 
 class ScenarioError(Exception):
@@ -134,6 +136,9 @@ def validate_expect(e, where):
         parse_at(e["at"])
     except ScenarioError as err:
         raise ScenarioError(f"{where}: at: {err}") from None
+    if at_bounds(e["at"])[0] < MIN_OFFSET_NS:
+        raise ScenarioError(f"{where}: at: {e['at']!r} starts before -30s; the recording lead-in "
+                            "(and a baseline) reaches at most 30 s before the anchor")
     if e.get("anchor", "send") not in ("send", "ack"):
         raise ScenarioError(f"{where}: anchor must be \"send\" or \"ack\", got {e['anchor']!r}")
     if e.get("mode", "any") not in ("any", "all"):

@@ -93,6 +93,8 @@ steps still run unless `stop_on_fail = true` at the top level.
   becomes `all` (every frame must lack it). Set `mode = "any"` explicitly for "at least one
   frame lacks it".
 - `at = "-100ms"`: frames before the action are allowed, for a baseline ("was not there yet").
+  Offsets go back at most `-30s` (the run records that much lead-in before step 1 at most);
+  an earlier one is a validation error.
 
 An offset window with no recorded frame in it is an **error**, not a pass. It means the
 recording couldn't resolve that window; the report says so.
