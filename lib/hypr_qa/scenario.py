@@ -12,6 +12,8 @@ import tomllib
 from . import lua
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# push paths reach a remote shell line (vmkit push, sudo chmod): no quoting needed.
+PUSH_PATH_RE = re.compile(r"^[A-Za-z0-9._/@:+,=-]+$")
 
 # ---- `at` ---------------------------------------------------------------------
 # A strict subset of vmkit's timeline grammar (lib/vmkit/timeline.py), so anything
@@ -243,6 +245,10 @@ def validate(doc):
             _check_keys(s["push"], {"src", "dst", "mode"}, f"{where} push", required=("src", "dst"))
             _str(s["push"]["src"], where, "push.src")
             _str(s["push"]["dst"], where, "push.dst")
+            for k in ("src", "dst"):
+                if not PUSH_PATH_RE.match(s["push"][k]):
+                    raise ScenarioError(f"{where}: push.{k} {s['push'][k]!r} may only contain letters, digits "
+                                        "and . _ / @ : + , = - (it goes through a remote shell unquoted)")
             if "mode" in s["push"] and not re.match(r"^[0-7]{3,4}$", str(s["push"]["mode"])):
                 raise ScenarioError(f"{where}: push.mode must be an octal string like \"0755\", got {s['push']['mode']!r}")
         else:

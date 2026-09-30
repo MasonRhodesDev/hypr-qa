@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import textwrap
@@ -157,6 +158,17 @@ class Validate(unittest.TestCase):
         with self.assertRaisesRegex(S.ScenarioError, r"setup\[1\]: must have exactly one"):
             S.validate(tomllib.loads('name="x"\nprofile="p"\n[[setup]]\nhyprctl=["x"]\n'
                                      '[[step]]\nid="a"\ndo={wait_ms=1}\n'))
+
+    def test_push_paths_are_shell_safe(self):
+        def scn(src, dst):
+            return tomllib.loads(f'name="x"\nprofile="p"\n[[setup]]\npush={{src={json.dumps(src)}, '
+                                 f'dst={json.dumps(dst)}}}\n[[step]]\nid="a"\ndo={{wait_ms=1}}\n')
+        for bad in ("/tmp/it's", '/tmp/a"b', "/tmp/a\nb", "/tmp/a b", "/tmp/$(id)", "/tmp/a;b", "~/x", "/tmp/a`b"):
+            for key, d in (("src", scn(bad, "/b")), ("dst", scn("a", bad))):
+                with self.subTest(key=key, bad=bad), self.assertRaisesRegex(
+                        S.ScenarioError, rf"setup\[1\]: push.{key} .*may only contain"):
+                    S.validate(d)
+        S.validate(scn("../fx/a_b-1.2+x.py", "/usr/local/bin/x@y:z,w=v"))
 
     def test_load_reports_toml_errors_with_path(self):
         with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
