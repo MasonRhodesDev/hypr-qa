@@ -89,6 +89,9 @@ steps still run unless `stop_on_fail = true` at the top level.
 - `at = "+300ms"`: the first frame at or after anchor + 300 ms.
 - `at = "+50ms..+300ms"`: every frame in the window. With `mode = "any"` (the default for
   windows) it passes if any frame passes; with `mode = "all"`, only if all do.
+- With `not = true`, a window means "in **no** frame of the window", so the default mode
+  becomes `all` (every frame must lack it). Set `mode = "any"` explicitly for "at least one
+  frame lacks it".
 - `at = "-100ms"`: frames before the action are allowed, for a baseline ("was not there yet").
 
 An offset window with no recorded frame in it is an **error**, not a pass. It means the
@@ -141,7 +144,7 @@ Measured on mason-desktop (spike, 2026-09-30; 3 reps per cell, guest under softw
 |------|---------|
 | `timeline.jsonl` | one line per action: `{step, kind, detail, t_send, t_ack, ok, error?}` |
 | `frames.jsonl`   | one line per recorded frame: `{n, t}` |
-| `video.mkv`      | the recording (frame timestamps match `frames.jsonl`) |
+| `video.mkv`      | the recording (lossless ffv1) for watching; it plays at the nominal rate, so stalls don't show in it. Timing always comes from `frames.jsonl` and the PNGs |
 | `frames/`        | PNGs of every frame a check used, named `<step>-<expect#>-<ms>.png` |
 | `results.json`   | per expectation: pass/fail/error, frames used, measured values |
 | `report.html`    | a contact sheet per step (frames around the action with the check region outlined), pass/fail summary, video |
@@ -156,3 +159,5 @@ Exit code: `0` all passed, `1` a check failed, `2` an error (boot, action, or un
   takes one qcode per argument, so write `meta_l ret`, not `super-ret`.
 - v0.2 (2026-09-30): timing resolution and cursor findings from the recording spike;
   cursor verified on plain-hyprland.
+- v0.3 (2026-09-30): `not` on a window defaults to `mode = "all"` ("never appears");
+  the video is for watching only, and `frames.jsonl` is the timing record.
