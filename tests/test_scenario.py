@@ -107,6 +107,12 @@ class Validate(unittest.TestCase):
                 S.validate(tomllib.loads(f'name="x"\nprofile="p"\n[hyprhands]\nargv=["s"]\n'
                                          f'[[step]]\nid="a"\ndo={b}\n'))
 
+    def test_hyprhands_request_must_be_json(self):
+        for v in ("1979-05-27", "07:32:00", "1979-05-27T07:32:00Z", "nan", "inf"):
+            with self.subTest(v=v), self.assertRaisesRegex(S.ScenarioError, r"do.hyprhands: .*JSON"):
+                S.validate(tomllib.loads(f'name="x"\nprofile="p"\n[hyprhands]\nargv=["s"]\n'
+                                         f'[[step]]\nid="a"\ndo={{ hyprhands={{ op="x", t={v} }} }}\n'))
+
     def test_hyprhands_step_needs_table(self):
         with self.assertRaisesRegex(S.ScenarioError, r"needs a \[hyprhands\] table"):
             S.validate(tomllib.loads('name="x"\nprofile="p"\n[[step]]\nid="a"\ndo={ hyprhands={ op="state" } }\n'))

@@ -4,6 +4,7 @@ Validation is strict: an unknown key anywhere is an error, so a typo such as
 `setle_ms` fails loudly instead of being ignored. Every error names where it
 is (`step[2] "open-foot" expect[1]: ...`).
 """
+import json
 import os
 import re
 import tomllib
@@ -202,6 +203,10 @@ def validate_do(do, where):
     if kind == "hyprhands":
         if not isinstance(v, dict) or not isinstance(v.get("op"), str) or not v["op"]:
             raise ScenarioError(f"{w}: must be a request table with a string op, e.g. {{ op = \"click\", x = 1, y = 2 }}")
+        try:
+            json.dumps(v, allow_nan=False)
+        except (TypeError, ValueError) as e:
+            raise ScenarioError(f"{w}: the request must be plain JSON (no dates, times, nan or inf): {e}") from None
     elif kind in ("vmkit", "hyprctl"):
         _argv(v, where, f"do.{kind}")
     elif kind == "session":
