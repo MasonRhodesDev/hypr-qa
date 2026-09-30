@@ -83,6 +83,10 @@ class Validate(unittest.TestCase):
         with self.assertRaisesRegex(S.ScenarioError, r"\[hyprhands\]: unknown key 'args'"):
             doc(tables='[hyprhands]\nargv = ["x"]\nargs = []\n')
 
+    def test_guest_hyprland_must_convert_to_lua(self):
+        with self.assertRaisesRegex(S.ScenarioError, r"\[guest\] hyprland: hyprland.a: a date"):
+            doc(tables="[guest]\nhyprland = { a = 1979-05-27 }\n")
+
     def test_missing_required(self):
         with self.assertRaisesRegex(S.ScenarioError, r"missing required key 'profile'"):
             S.validate(tomllib.loads('name = "x"\n[[step]]\nid = "a"\ndo = { wait_ms = 1 }\n'))

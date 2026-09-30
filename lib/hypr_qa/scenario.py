@@ -8,6 +8,8 @@ import os
 import re
 import tomllib
 
+from . import lua
+
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 # ---- `at` ---------------------------------------------------------------------
@@ -223,6 +225,11 @@ def validate(doc):
         _check_keys(doc["guest"], {"hyprland"}, "[guest]")
         if "hyprland" in doc["guest"] and not isinstance(doc["guest"]["hyprland"], dict):
             raise ScenarioError("[guest]: hyprland must be a table (it is passed to hl.config())")
+        if "hyprland" in doc["guest"]:
+            try:
+                lua.hl_config(doc["guest"]["hyprland"])
+            except lua.LuaError as e:
+                raise ScenarioError(f"[guest] hyprland: {e}") from None
     for i, s in enumerate(doc.get("setup", []), 1):
         where = f"setup[{i}]"
         if not isinstance(s, dict) or len(s) != 1 or next(iter(s)) not in SETUP:
