@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""A fake profile `vm` wrapper for the runner's tests: no QEMU.
+
+State lives in $FAKE_VM_STATE. It stamps actions like vmkit (actions.jsonl with
+t_send/t_ack/ok/step from $VMKIT_STEP), "records" by writing synthetic frames at
+`record stop` (8x8 PNGs every 33 ms since `record start`: black, white once a
+`keys` action has happened), runs `session CMD...` locally (so the fake
+hyprhands serve works through it), and hands `check`/`report` to the real vmkit
+($VMKIT). $FAKE_VM_FAIL names a command to fail (e.g. "qa-cursor-plane").
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+
+ST = os.environ["FAKE_VM_STATE"]
+VMKIT = os.environ["VMKIT"]
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(VMKIT)), "lib"))
+from vmkit import imageio  # noqa: E402
+
+now = time.monotonic_ns
+
+
+def log(line):
+    with open(os.path.join(ST, "calls.log"), "a") as f:
+        f.write(line + "\n")
+
+
+def rec_run():
+    try:
+        return open(os.path.join(ST, "record.run")).read().strip()
+    except OSError:
+        return None
+
+
+def stamp(cmd, args, t_send, t_ack, ok=True, error=None):
+    r = {"t": "x", "cmd": cmd, "args": args, "t_send": t_send, "t_ack": t_ack, "ok": ok}
+    if error:
+        r["error"] = error
+    if os.environ.get("VMKIT_STEP"):
+        r["step"] = os.environ["VMKIT_STEP"]
+    paths = [os.path.join(ST, "actions.jsonl")] + ([os.path.join(rec_run(), "actions.jsonl")] if rec_run() else [])
+    for p in paths:
+        with open(p, "a") as f:
+            f.write(json.dumps(r) + "\n")
+
+
+def main(a):
+    log(" ".join(a) + (f"  [step={os.environ['VMKIT_STEP']}]" if os.environ.get("VMKIT_STEP") else ""))
+    fail = os.environ.get("FAKE_VM_FAIL")
+    cmd = a[0]
+    if fail and fail in a:
+        print(f"fake failure: {fail}", file=sys.stderr)
+        if cmd in ("keys", "type", "session"):
+            t = now()
+            stamp(cmd, " ".join(a[1:]), t, t, False, "exit 1")
+        return 1
+    if cmd in ("restore", "wait", "push", "down"):
+        return 0
+    if cmd == "ssh":
+        if a[1:] == ["qa-cursor-plane"]:
+            print("cursor-plane 36 crtc=(null) fb=0 unused")
+        return 0
+    if cmd == "session":
+        argv = a[1:]
+        if argv[0] == "hyprctl":
+            t = now(); stamp("ssh", " ".join(argv), t, now())
+            print("ok")
+            return 0
+        if os.environ.get("VMKIT_STEP"):
+            t = now(); rc = subprocess.call(argv); stamp("ssh", " ".join(argv), t, now(), rc == 0)
+            return rc
+        os.execvp(argv[0], argv)
+    if cmd in ("keys", "type", "click", "tap"):
+        t = now()
+        if cmd == "keys":
+            open(os.path.join(ST, "switch"), "w").write(str(t))
+        stamp(cmd, " ".join(a[1:]), t, now())
+        return 0
+    if cmd == "record":
+        if a[1] == "start":
+            out = a[a.index("--out") + 1]
+            open(os.path.join(ST, "record.run"), "w").write(out)
+            open(os.path.join(ST, "record.t0"), "w").write(str(now()))
+            print(out)
+            return 0
+        if a[1] == "stop":
+            out = rec_run()
+            os.unlink(os.path.join(ST, "record.run"))
+            t0 = int(open(os.path.join(ST, "record.t0")).read())
+            try:
+                sw = int(open(os.path.join(ST, "switch")).read())
+            except OSError:
+                sw = None
+            t1 = now()
+            os.makedirs(os.path.join(out, "frames"), exist_ok=True)
+            black = imageio.Image(8, 8, bytes(8 * 8 * 3))
+            white = imageio.Image(8, 8, bytes([255]) * (8 * 8 * 3))
+            n, t = 0, t0
+            with open(os.path.join(out, "frames.jsonl"), "w") as f:
+                while t <= t1:
+                    img = white if sw is not None and t > sw + 20_000_000 else black
+                    imageio.write_png(img, os.path.join(out, "frames", f"{n:06d}.png"))
+                    f.write(json.dumps({"n": n, "t_req": t - 1_000_000, "t": t, "inactive": False}) + "\n")
+                    n, t = n + 1, t + 33_333_333
+            json.dump({"frames": n, "fps": 30.0, "target_fps": 30, "degraded": False,
+                       "interval_ms": {"p50": 33.3, "p95": 33.3, "max": 33.3}, "screendump_call_ms": {},
+                       "degraded_threshold_ms": 50, "gaps_over_threshold": 0, "inactive_frames": 0, "error": None},
+                      open(os.path.join(out, "summary.json"), "w"))
+            print(out)
+            print(f"frames {n}  degraded=false")
+            return 0
+    if cmd in ("check", "report"):
+        return subprocess.call([VMKIT, "--dir", ST, *a])
+    print(f"fake vm: unhandled {a}", file=sys.stderr)
+    return 2
+
+
+sys.exit(main(sys.argv[1:]))
