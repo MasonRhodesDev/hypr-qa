@@ -7,7 +7,7 @@ profile  = "plain-hyprland"
 snapshot = "session-ready"
 
 [guest]
-hyprland = { "cursor:no_hardware_cursors" = true }  # so the robot cursor lands in frames
+hyprland = { cursor = { no_hardware_cursors = true } }  # so the robot cursor lands in frames
 
 [[setup]]
 push = { src = "../hyprhands/target/release/hyprhands", dst = "/usr/local/bin/hyprhands", mode = "0755" }

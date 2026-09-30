@@ -44,7 +44,7 @@ profile = "plain-hyprland"        # guest profile (profiles/<name>/)
 snapshot = "session-ready"        # restore this snapshot before the run (default: profile's)
 
 [guest]
-hyprland = { "cursor:no_hardware_cursors" = true }  # hyprctl keywords applied before step 1
+hyprland = { cursor = { no_hardware_cursors = true } }  # passed to hl.config() via `hyprctl eval` before step 1
 
 [[setup]]                          # runs before recording starts; not checked
 push = { src = "target/release/hyprhands", dst = "/usr/local/bin/hyprhands", mode = "0755" }
@@ -77,7 +77,7 @@ Exactly one key per step:
 | key         | value | performed by |
 |-------------|-------|--------------|
 | `hyprhands` | a request object as in hyprhands `src/proto.rs` (`{op = "...", ...args}`) | the runner's `hyprhands serve` session over ssh |
-| `vmkit`     | argv for a vmkit input command, e.g. `["click", "640", "400"]`, `["keys", "super-ret"]`, `["type", "hello"]` | QMP, host side |
+| `vmkit`     | argv for a vmkit input command, e.g. `["click", "640", "400"]`, `["keys", "meta_l", "ret"]` (one QMP qcode per argument, pressed together), `["type", "hello"]` | QMP, host side |
 | `session`   | a shell command run in the guest's Hyprland session (Wayland/Hyprland/DBus env imported) | ssh |
 | `hyprctl`   | argv after `hyprctl`, e.g. `["dispatch", "workspace", "2"]` | ssh, in session |
 | `wait_ms`   | an integer; no action, only a timestamped marker | host |
@@ -114,7 +114,7 @@ exact-color checks.
 
 The pointer is drawn into recorded frames only if Hyprland uses a software cursor.
 With a hardware cursor plane, the screen capture omits it. Scenarios that check the cursor must set
-`[guest] hyprland = { "cursor:no_hardware_cursors" = true }`. *(Pending the spike:
+`[guest] hyprland = { cursor = { no_hardware_cursors = true } }`. *(Pending the spike:
 whether this is required and sufficient.)*
 
 ## Output
@@ -135,3 +135,6 @@ Exit code: `0` all passed, `1` a check failed, `2` an error (boot, action, or un
 ## Changelog
 
 - v0 (2026-09-30): first draft.
+- v0.1 (2026-09-30): `[guest] hyprland` is a nested table given to `hl.config()` through
+  `hyprctl eval`, because Hyprland 0.56 (Lua config) rejects `hyprctl keyword`. `vmkit keys`
+  takes one qcode per argument, so write `meta_l ret`, not `super-ret`.
