@@ -106,7 +106,7 @@ class VM:
         """(rc, stdout, stderr); rc None on timeout."""
         t0 = time.monotonic()
         try:
-            p = subprocess.run(self.argv(*args), capture_output=True, text=True, env=self.env(step),
+            p = subprocess.run(self.argv(*args), capture_output=True, text=True, errors="replace", env=self.env(step),
                                timeout=timeout, stdin=subprocess.DEVNULL)
             rc, out, err = p.returncode, p.stdout, p.stderr
         except subprocess.TimeoutExpired as e:

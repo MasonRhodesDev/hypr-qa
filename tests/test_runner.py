@@ -160,6 +160,13 @@ class RunnerE2E(unittest.TestCase):
         self.assertTrue(any("qa-cursor-plane" in e for e in res["errors"]), res["errors"])
         self.assertFalse(os.path.exists(os.path.join(run, "frames.jsonl")))
 
+    def test_non_utf8_output_is_kept_not_fatal(self):
+        code, run = self.run_it('name="u"\nprofile="fake"\n[[step]]\nid="bin"\n'
+                                'do={session="printf \'x\\\\377\\\\376\'"}\n')
+        self.assertEqual(code, 0)
+        res = json.load(open(os.path.join(run, "results.json")))
+        self.assertEqual(res["steps"][0]["stdout"], "x\ufffd\ufffd")
+
     def test_failed_action_and_stop_on_fail(self):
         os.environ["FAKE_VM_FAIL"] = "meta_l"
         code, run = self.run_it("stop_on_fail = true\n" + SCENARIO)
