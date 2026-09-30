@@ -84,8 +84,9 @@ cmd_restore() {
     if [ -n "$out" ]; then echo "vm: loadvm $name: $out" >&2; return 1; fi
     echo "restored $name"
     # The guest clock resumes at snapshot time; the emulated RTC follows the
-    # host, so resync from it (best effort).
-    vk ssh 'sudo hwclock --hctosys' >/dev/null 2>&1 || true
+    # host, so resync from it (best effort). Without VMKIT_STEP: a `restore` step
+    # must not be stamped by this ssh (it would anchor after the loadvm).
+    (unset VMKIT_STEP; vk ssh 'sudo hwclock --hctosys') >/dev/null 2>&1 || true
 }
 
 cmd_snapshots() {
