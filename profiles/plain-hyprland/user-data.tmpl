@@ -44,6 +44,10 @@ write_files:
     permissions: '0755'
     encoding: b64
     content: @QA_CURSOR_PLANE_B64@
+  - path: /usr/local/bin/qa-setcursor
+    permissions: '0755'
+    encoding: b64
+    content: @QA_SETCURSOR_B64@
   - path: /etc/udev/rules.d/99-hypr-qa-usb-no-autosuspend.rules
     permissions: '0644'
     encoding: b64

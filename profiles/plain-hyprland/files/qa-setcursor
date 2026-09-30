@@ -1,0 +1,25 @@
+#!/bin/sh
+# qa-setcursor THEME SIZE — `hyprctl setcursor THEME SIZE`, and make it show.
+#
+# Hyprland 0.56 `setcursor` loads the theme but does not re-apply the current
+# shape: the old image stays until the shape name changes (the pointer enters
+# a client that sets another shape) or the cursor is re-shown. On the empty
+# desktop the shape is always left_ptr, so the old pointer stays however the
+# pointer moves. Hiding and showing the cursor forces the re-apply. Hyprland
+# acts on cursor:invisible from a 500 ms timer, so each state is held 0.6 s:
+# the pointer is hidden for up to ~1 s.
+#
+# Runs in the calling user's Hyprland session (via qa-session when the
+# session env is not set). Exit 0 once the new theme is on screen.
+set -eu
+if [ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then exec qa-session "$0" "$@"; fi
+[ $# -eq 2 ] || { echo "usage: qa-setcursor THEME SIZE" >&2; exit 2; }
+r=$(hyprctl setcursor "$1" "$2")
+[ "$r" = ok ] || { echo "qa-setcursor: hyprctl setcursor: $r" >&2; exit 1; }
+# Already hidden: it re-applies when shown, nothing to force.
+hyprctl -j getoption cursor:invisible | grep -q '"bool": *false' || exit 0
+for v in true false; do
+    r=$(hyprctl eval "hl.config({ cursor = { invisible = $v } })")
+    [ "$r" = ok ] || { echo "qa-setcursor: hyprctl eval invisible=$v: $r" >&2; exit 1; }
+    sleep 0.6
+done

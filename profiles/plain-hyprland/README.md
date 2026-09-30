@@ -19,7 +19,7 @@ the KVM host (mason-desktop), never on the desktop you're working at.
 | USB power | `/etc/udev/rules.d/99-hypr-qa-usb-no-autosuspend.rules` sets `power/control=on` for every USB device. Otherwise QEMU's usb-kbd autosuspends after 2 s idle, and the next key press takes ~130 ms instead of ~36 ms (measured by the recording spike). The build checks that the keyboard is still `active` after 6 s idle |
 | Pointer theme | Adwaita at 24 px (`adwaita-cursors` in `/usr/share/icons`, `XCURSOR_THEME`/`XCURSOR_SIZE` set with `hl.env`, which runs before Hyprland creates its cursor manager). Without a theme, Hyprland draws its built-in 32x32 fallback pointer (a 25x31 droplet on screen). `default-cursors` already has `/usr/share/icons/default` inherit Adwaita. `cursor:enable_hyprcursor` stays at its default: no hyprcursor theme is installed, so the log's `Hyprcursor failed loading theme ..., falling back to XCursor` is expected |
 | Cursor | stock Hyprland (`cursor:no_hardware_cursors` = 2, auto) leaves the virtio-gpu cursor plane unused, so the pointer is composited into the framebuffer and appears in `screendump` frames. Forcing `no_hardware_cursors` to `true` or `false` with `hyprctl eval` makes no difference: the plane stays unused. The build asserts this |
-| Helpers | `/usr/local/bin/qa-session CMD...` runs CMD in the Hyprland session (it resolves `HYPRLAND_INSTANCE_SIGNATURE`, `WAYLAND_DISPLAY` and the DBus bus from `/run/user/$UID`). `/usr/local/bin/qa-cursor-plane` reports whether the DRM cursor plane is in use (see below) |
+| Helpers | `/usr/local/bin/qa-session CMD...` runs CMD in the Hyprland session (it resolves `HYPRLAND_INSTANCE_SIGNATURE`, `WAYLAND_DISPLAY` and the DBus bus from `/run/user/$UID`). `/usr/local/bin/qa-cursor-plane` reports whether the DRM cursor plane is in use (see below). `/usr/local/bin/qa-setcursor THEME SIZE` changes the pointer theme so that it shows (see below) |
 
 Hyprland 0.56 reads **Lua only** (`hyprland.lua`). `hyprctl keyword` fails with
 "keyword can't work with non-legacy parsers. Use eval." So apply runtime
@@ -29,6 +29,28 @@ options with `eval`:
 vm session hyprctl eval 'hl.config({ cursor = { no_hardware_cursors = true } })'
 vm session hyprctl eval 'hl.config({ animations = { enabled = true } })'
 ```
+
+### Changing the pointer theme
+
+`hyprctl setcursor THEME SIZE` replies `ok` and loads the theme (the log
+shows `XCursor using theme path ...`), but in Hyprland 0.56.2 the pointer on
+screen doesn't change. `setcursor` doesn't re-apply the current shape, and
+Hyprland only reloads the image when the shape name changes or the cursor is
+shown again. Over the empty desktop the shape is always `left_ptr`, so moving
+the pointer doesn't help. It changes once the pointer enters a client that
+sets another shape, or when the cursor is hidden and shown. `qa-setcursor`
+does the latter:
+
+```sh
+vm ssh 'qa-setcursor redglass 24'   # setcursor, cursor:invisible true, 0.6 s, false, 0.6 s
+```
+
+Hyprland applies `cursor:invisible` from a 500 ms timer, so each state has to
+last longer than that. Toggling it back-to-back doesn't work (0 of 6 tries;
+6 of 6 with the 0.6 s holds). The pointer is hidden for up to about 1 s.
+Themes are found in `~/.local/share/icons`, `~/.icons` and
+`/usr/share/icons`. The image ships Adwaita only; `redglass` in the example
+comes from `sudo pacman -S xcursor-themes`.
 
 ### Is the pointer in the frames?
 
