@@ -106,19 +106,53 @@ class Kills(unittest.TestCase):
             st = f.read()
         self.assertTrue(not st or st.rsplit(")", 1)[1].split()[0] == "Z", "grandchild survived the timeout")
 
-    def test_forced_serve_close_cleans_up_the_guest_side_by_exact_name(self):
+    def serve_runner(self, argv0):
         state = os.path.join(self.tmp, "state")
-        os.makedirs(state)
+        os.makedirs(state, exist_ok=True)
         scn = os.path.join(self.tmp, "s.toml")
         with open(scn, "w") as f:
-            f.write('name="k"\nprofile="fake"\n[hyprhands]\nargv=["/usr/local/bin/fake-hyprhands", "serve"]\n'
+            f.write(f'name="k"\nprofile="fake"\n[hyprhands]\nargv=["{argv0}", "{FAKE_SERVE}"]\n'
                     '[[step]]\nid="a"\ndo={wait_ms=1}\n')
-        with mock.patch.dict(os.environ, {"FAKE_VM_STATE": state, "VMKIT": VMKIT}):
-            r = runner.Runner(scn, runs_dir=os.path.join(self.tmp, "runs"),
-                              profiles_dir=os.path.join(HERE, "fake_profiles"))
-            r.serve = mock.Mock(killed=True, **{"close.return_value": -9})
-            r.stop_serve()
-        self.assertIn("session pkill -x fake-hyprhands", open(os.path.join(state, "calls.log")).read())
+        env = mock.patch.dict(os.environ, {"FAKE_VM_STATE": state, "VMKIT": VMKIT, "TMPDIR": self.tmp})
+        env.start()
+        self.addCleanup(env.stop)
+        r = runner.Runner(scn, runs_dir=os.path.join(self.tmp, "runs"), profiles_dir=os.path.join(HERE, "fake_profiles"))
+        return r, os.path.join(self.tmp, f"hypr-qa-serve.{r.serve_id}.pid"), os.path.join(state, "calls.log")
+
+    def sleeper(self, marker=None):
+        env = dict(os.environ, **({"HYPR_QA_SERVE": marker} if marker else {}))
+        p = subprocess.Popen(["sleep", "30"], env=env)
+        self.addCleanup(lambda: (p.kill(), p.wait()))
+        return p
+
+    def test_serve_records_its_guest_pid(self):
+        r, pidf, _ = self.serve_runner(sys.executable)
+        r.start_serve()
+        self.assertTrue(r.serve.request({"op": "ping"})["ok"])
+        self.assertEqual(int(open(pidf).read()), r.serve.p.pid)   # the fake vm runs `session` in place
+        self.assertEqual(r.serve.close(), 0)
+
+    def test_forced_serve_close_kills_only_the_recorded_serve(self):
+        r, pidf, calls = self.serve_runner(sys.executable)   # an interpreter: never pkill by name
+        serve, bystander = self.sleeper(r.serve_id), self.sleeper()
+        with open(pidf, "w") as f:
+            f.write(f"{serve.pid}\n")
+        r.serve = mock.Mock(killed=True, **{"close.return_value": -9})
+        r.stop_serve()
+        self.assertEqual(serve.wait(5), -signal.SIGTERM)
+        self.assertIsNone(bystander.poll(), "killed a process that is not the serve")
+        self.assertNotIn("pkill", open(calls).read())
+        self.assertFalse(os.path.exists(pidf))
+
+    def test_forced_serve_close_leaves_a_reused_pid_alone(self):
+        r, pidf, _ = self.serve_runner(sys.executable)
+        other = self.sleeper()   # the serve is gone and its pid now belongs to something else
+        with open(pidf, "w") as f:
+            f.write(f"{other.pid}\n")
+        r.serve = mock.Mock(killed=True, **{"close.return_value": -9})
+        r.stop_serve()
+        time.sleep(0.3)
+        self.assertIsNone(other.poll())
 
 
 class LeadIn(unittest.TestCase):
@@ -139,7 +173,8 @@ class RunnerE2E(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="hqa-test-")
         self.state = os.path.join(self.tmp, "state")
         os.makedirs(self.state)
-        self.env = {"FAKE_VM_STATE": self.state, "VMKIT": VMKIT, "HYPR_QA_RUNS": os.path.join(self.tmp, "runs")}
+        self.env = {"FAKE_VM_STATE": self.state, "VMKIT": VMKIT, "HYPR_QA_RUNS": os.path.join(self.tmp, "runs"),
+                    "TMPDIR": self.tmp}   # the serve's pidfile
         self.old = {k: os.environ.get(k) for k in self.env}
         os.environ.update(self.env)
         self.scn = os.path.join(self.tmp, "s.toml")

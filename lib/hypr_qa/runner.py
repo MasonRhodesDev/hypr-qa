@@ -36,6 +36,12 @@ FRAME_FILE = re.compile(r"^\d{6}\.png$")
 # hyprctl commands that reply exactly "ok" on success. Hyprland 0.56.2 exits 7 on eval and
 # dispatch errors, but refuses `keyword` with exit 0, so the reply is checked too (as hyprhands does).
 HYPRCTL_OK_REPLY = ("dispatch", "eval", "keyword")
+# The serve runs through this guest wrapper ($0 = the run's serve id): it records its pid and a
+# marker in its environment, so a forced close kills exactly that process (argv[0] may be an
+# interpreter: never kill by name). One line: `vm session` quotes it with printf %q.
+SERVE_WRAPPER = 'echo $$ >"${TMPDIR:-/tmp}/hypr-qa-serve.$0.pid"; export HYPR_QA_SERVE="$0"; exec "$@"'
+SERVE_KILL = ('f="${TMPDIR:-/tmp}/hypr-qa-serve.$0.pid"; p=$(cat "$f" 2>/dev/null) || exit 0; rm -f "$f"; '
+              'grep -qzx "HYPR_QA_SERVE=$0" "/proc/$p/environ" 2>/dev/null && kill -TERM "$p"; exit 0')
 
 
 def utc_stamp():
@@ -190,6 +196,7 @@ class Runner:
         self.steps = []           # timeline rows
         self.skipped = []
         self.serve = None
+        self.serve_id = f"{utc_stamp()}-{os.getpid()}"
         self.recording = False
         self.record_attempted = False   # record start was run (it may have started the recorder)
         self.traceback = None     # an unexpected exception's, if any
@@ -261,7 +268,7 @@ class Runner:
         hh = self.doc.get("hyprhands")
         if not hh:
             return
-        argv = self.vm.argv("session", *hh["argv"])
+        argv = self.vm.argv("session", "sh", "-c", SERVE_WRAPPER, self.serve_id, *hh["argv"])
         say(f"hyprhands: {' '.join(hh['argv'])}")
         self.serve = proto.Serve(argv, os.path.join(self.run_dir, "hyprhands-serve.log"),
                                  env=self.vm.env(), timeout=self.serve_timeout)
@@ -273,11 +280,10 @@ class Runner:
         if rc not in (0, None):
             say(f"hyprhands serve exited {rc} (see hyprhands-serve.log)")
         if self.serve.killed:
-            # Killing the host side drops ssh; make sure the guest side is gone too. By exact
-            # process name (comm, 15 chars), never a pattern that matches this command line.
-            name = os.path.basename(self.doc["hyprhands"]["argv"][0])[:15]
-            say(f"hyprhands serve had to be killed; pkill -x {name} in the guest")
-            self.vm.run("session", "pkill", "-x", name, timeout=60)
+            # Killing the host side drops ssh; make sure the guest side is gone too: the pid
+            # the wrapper recorded, and only while it still carries this run's marker.
+            say("hyprhands serve had to be killed; killing its recorded pid in the guest")
+            self.vm.run("session", "sh", "-c", SERVE_KILL, self.serve_id, timeout=60)
 
     def lead_in_s(self):
         """Record this long before step 1, so its most negative `at` has frames."""
