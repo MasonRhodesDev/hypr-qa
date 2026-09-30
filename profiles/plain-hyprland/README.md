@@ -16,7 +16,9 @@ the KVM host (mason-desktop), never on the desktop you're working at.
 | Display | virtio-vga, output `Virtual-1`, pinned to `1280x800@60`, scale 1 (the virtio default mode, set explicitly as well) |
 | Hyprland config | `~qa/.config/hypr/hyprland.lua` = the installed `/usr/share/hypr/hyprland.lua` with `terminal = "foot"`, plus [`files/hyprland-qa.lua`](files/hyprland-qa.lua): `ecosystem { no_update_news, no_donation_nag }`, `misc { disable_hyprland_logo, disable_splash_rendering, force_default_wallpaper = 0 }`, `animations { enabled = false }` |
 | Snapshot | `session-ready`: an internal snapshot in the overlay, taken with the session up, no windows open, the screen settled |
-| Helper | `/usr/local/bin/qa-session CMD...` runs CMD in the Hyprland session (it resolves `HYPRLAND_INSTANCE_SIGNATURE`, `WAYLAND_DISPLAY` and the DBus bus from `/run/user/$UID`) |
+| USB power | `/etc/udev/rules.d/99-hypr-qa-usb-no-autosuspend.rules` sets `power/control=on` for every USB device. Otherwise QEMU's usb-kbd autosuspends after 2 s idle, and the next key press takes ~130 ms instead of ~36 ms (measured by the recording spike). The build checks that the keyboard is still `active` after 6 s idle |
+| Cursor | stock Hyprland (`cursor:no_hardware_cursors` = 2, auto) leaves the virtio-gpu cursor plane unused, so the pointer is composited into the framebuffer and appears in `screendump` frames. Forcing `no_hardware_cursors` to `true` or `false` with `hyprctl eval` makes no difference: the plane stays unused. The build asserts this |
+| Helpers | `/usr/local/bin/qa-session CMD...` runs CMD in the Hyprland session (it resolves `HYPRLAND_INSTANCE_SIGNATURE`, `WAYLAND_DISPLAY` and the DBus bus from `/run/user/$UID`). `/usr/local/bin/qa-cursor-plane` reports whether the DRM cursor plane is in use (see below) |
 
 Hyprland 0.56 reads **Lua only** (`hyprland.lua`). `hyprctl keyword` fails with
 "keyword can't work with non-legacy parsers. Use eval." So apply runtime
@@ -25,6 +27,26 @@ options with `eval`:
 ```sh
 vm session hyprctl eval 'hl.config({ cursor = { no_hardware_cursors = true } })'
 vm session hyprctl eval 'hl.config({ animations = { enabled = true } })'
+```
+
+### Is the pointer in the frames?
+
+QMP `screendump` captures only the primary plane. If Hyprland puts the pointer
+on the hardware cursor plane, recordings don't show it. Check before a run
+that relies on the pointer:
+
+```sh
+vm ssh qa-cursor-plane    # "cursor-plane 36 crtc=(null) fb=0 unused", exit 0
+```
+
+It finds the cursor plane id (libdrm's `modetest -p`, type Cursor) and reads
+its `crtc`/`fb` from `/sys/kernel/debug/dri/0/state` with sudo, mounting
+debugfs if needed. The exit status is 0 when the plane is unused (the pointer
+is composited into frames), 1 when it's in use, and 2 when it can't tell. To
+check by hand:
+
+```sh
+vm ssh 'sudo mount -t debugfs none /sys/kernel/debug 2>/dev/null; sudo cat /sys/kernel/debug/dri/0/state' | grep -A2 '^plane'
 ```
 
 ## Host side

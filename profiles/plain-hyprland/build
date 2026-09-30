@@ -92,7 +92,9 @@ python3 - "$HERE/user-data.tmpl" "$seed_dir/user-data" \
     "@QA_SESSION_B64@=$(b64 qa-session)" \
     "@HYPRLAND_QA_B64@=$(b64 hyprland-qa.lua)" \
     "@GREETD_B64@=$(b64 greetd-autologin.toml)" \
-    "@FOOT_INI_B64@=$(b64 foot.ini)" <<'PY'
+    "@FOOT_INI_B64@=$(b64 foot.ini)" \
+    "@QA_CURSOR_PLANE_B64@=$(b64 qa-cursor-plane)" \
+    "@USB_RULE_B64@=$(b64 99-hypr-qa-usb-no-autosuspend.rules)" <<'PY'
 import sys
 src, dst, *subs = sys.argv[1:]
 text = open(src).read()
@@ -164,6 +166,16 @@ for opt in animations:enabled misc:disable_hyprland_logo misc:disable_splash_ren
            ecosystem:no_update_news ecosystem:no_donation_nag; do
     echo "   $opt: $("$VM" session hyprctl -j getoption "$opt" | python3 -c 'import json,sys; o=json.load(sys.stdin); print({k:v for k,v in o.items() if k!="option"})')"
 done
+# Pointer must be composited into frames (QMP screendump omits a hardware
+# cursor plane): move it, then check the DRM cursor plane is unused.
+"$VM" move 640 400 >/dev/null
+"$VM" ssh qa-cursor-plane | sed 's/^/   /' || die "hardware cursor plane in use: the pointer would be missing from frames"
+# USB input must not runtime-suspend (adds ~100 ms to the next key press).
+sleep 6
+usb=$("$VM" ssh 'for d in /sys/bus/usb/devices/*; do [ -f "$d/product" ] && echo "$(cat "$d/product"): $(cat "$d/power/runtime_status")"; done; true')
+printf '%s\n' "$usb" | sed 's/^/   usb /'
+printf '%s\n' "$usb" | grep -q 'Keyboard: active$' || die "USB keyboard is not runtime-active after 6 s idle"
+! printf '%s\n' "$usb" | grep -q ': suspended$' || die "a USB device runtime-suspended despite the udev rule"
 "$VM" wait screen 60 3 >/dev/null || echo "   (screen did not settle within 60 s; snapshotting anyway)"
 
 phase "snapshot"

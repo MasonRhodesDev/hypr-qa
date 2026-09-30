@@ -1,0 +1,7 @@
+# hypr-qa: keep USB devices (QEMU's usb-kbd, a usb-tablet if present, and
+# the hubs above them) out of runtime autosuspend. With the default 2 s idle
+# suspend, the first key press after a pause waits ~100 ms for USB resume,
+# which shows up as input latency in timed QA scenarios.
+# Numbered 99 so it runs after systemd's 60-autosuspend.rules, which sets
+# power/control=auto for QEMU devices (hwdb) on add.
+ACTION=="add|change", SUBSYSTEM=="usb", TEST=="power/control", ATTR{power/control}="on"
