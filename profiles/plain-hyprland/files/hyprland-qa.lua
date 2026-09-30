@@ -6,6 +6,14 @@
 -- needs. Later hl.config calls win.
 ----------------------------------------------------------------------
 
+-- A real XCursor theme (adwaita-cursors, in /usr/share/icons). Without one
+-- Hyprland draws its built-in 32x32 fallback pointer. hl.env runs before
+-- Hyprland creates its cursor manager, so this is the startup theme, and
+-- clients inherit it. No hyprcursor theme is installed: hyprcursor fails
+-- ("Hyprcursor failed loading theme") and Hyprland falls back to XCursor.
+hl.env("XCURSOR_THEME", "Adwaita")
+hl.env("XCURSOR_SIZE", "24")
+
 -- Fixed output: virtio-vga's default mode is 1280x800; pin it anyway.
 hl.monitor({
     output   = "Virtual-1",
