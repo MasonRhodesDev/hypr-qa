@@ -465,15 +465,27 @@ def evaluate(run_dir, doc, scenario_dir, vm):
         write_json(exp_path, batch)
         if batch:
             say(f"checking {len(batch)} expectation(s)")
+            try:
+                os.unlink(out_path)   # never read back a previous run's results
+            except FileNotFoundError:
+                pass
             rc, out, err = vm.run("check", "batch", exp_path, "--run", run_dir, "-o", out_path, timeout=3600)
             try:
                 with open(out_path) as f:
                     checks = json.load(f)
+                if not isinstance(checks, list) or not all(isinstance(c, dict) for c in checks):
+                    raise ValueError("not a list of objects")
             except (OSError, ValueError):
                 errors.append(f"vmkit check batch wrote no results (exit {rc}): {_tail(out, err)}")
                 checks = []
             if rc not in (0, 1, 2):
                 errors.append(f"vmkit check batch exited {rc}: {_tail(out, err)}")
+            got = {c.get("id") for c in checks}
+            for b in batch:
+                if b["id"] not in got:
+                    checks.append({"id": b["id"], "check": b["check"], "at": b["at"], "anchor": b["anchor"],
+                                   "not": bool(b.get("not")), "action": b["action"], "frames": [],
+                                   "status": "error", "error": "no result from vmkit check batch"})
     # Expectations of steps that never ran: error rows (not sent to vmkit).
     for st in doc["step"]:
         if st["id"] in performed:

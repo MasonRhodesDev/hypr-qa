@@ -152,6 +152,26 @@ class RunnerE2E(unittest.TestCase):
         res = json.load(open(os.path.join(run, "results.json")))
         self.assertEqual(res["counts"]["fail"], 1)
 
+    def test_check_never_reports_stale_or_missing_results(self):
+        code, run = self.run_it()
+        self.assertEqual(code, 0)
+        fake = os.path.join(HERE, "fake_profiles")
+        os.environ["FAKE_VM_FAIL"] = "batch"          # vmkit check batch fails without writing output
+        self.assertEqual(runner.check_run(run, profiles_dir=fake), 2)
+        res = json.load(open(os.path.join(run, "results.json")))
+        self.assertTrue(any("check batch wrote no results" in e for e in res["errors"]), res["errors"])
+        del os.environ["FAKE_VM_FAIL"]
+        os.environ["FAKE_VM_CHECK_DROP"] = "press#2"  # vmkit answers, but without one expectation
+        try:
+            self.assertEqual(runner.check_run(run, profiles_dir=fake), 2)
+        finally:
+            del os.environ["FAKE_VM_CHECK_DROP"]
+        res = json.load(open(os.path.join(run, "results.json")))
+        st = {e["id"]: e for e in res["expectations"]}
+        self.assertEqual(st["press#2"]["status"], "error")
+        self.assertIn("no result", st["press#2"]["error"])
+        self.assertEqual(st["press#1"]["status"], "pass")
+
     def test_precheck_failure_is_an_error_without_recording(self):
         os.environ["FAKE_VM_FAIL"] = "qa-cursor-plane"
         code, run = self.run_it()

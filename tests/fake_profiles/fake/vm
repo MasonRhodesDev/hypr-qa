@@ -6,7 +6,8 @@ t_send/t_ack/ok/step from $VMKIT_STEP), "records" by writing synthetic frames at
 `record stop` (8x8 PNGs every 33 ms since `record start`: black, white once a
 `keys` action has happened), runs `session CMD...` locally (so the fake
 hyprhands serve works through it), and hands `check`/`report` to the real vmkit
-($VMKIT). $FAKE_VM_FAIL names a command to fail (e.g. "qa-cursor-plane").
+($VMKIT). $FAKE_VM_FAIL names a command to fail (e.g. "qa-cursor-plane");
+$FAKE_VM_CHECK_DROP names an expectation id to drop from `check batch` output.
 """
 import json
 import os
@@ -112,7 +113,13 @@ def main(a):
             print(f"frames {n}  degraded=false")
             return 0
     if cmd in ("check", "report"):
-        return subprocess.call([VMKIT, "--dir", ST, *a])
+        rc = subprocess.call([VMKIT, "--dir", ST, *a])
+        drop = os.environ.get("FAKE_VM_CHECK_DROP")   # an expectation id vmkit "forgets"
+        if cmd == "check" and drop:
+            out = a[a.index("-o") + 1]
+            rows = [r for r in json.load(open(out)) if r.get("id") != drop]
+            json.dump(rows, open(out, "w"))
+        return rc
     print(f"fake vm: unhandled {a}", file=sys.stderr)
     return 2
 
