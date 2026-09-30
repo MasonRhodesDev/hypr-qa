@@ -164,9 +164,9 @@ class Runner:
         self.sdir = os.path.dirname(self.path)
         base = runs_dir or os.environ.get("HYPR_QA_RUNS") or os.path.join(REPO, "runs")
         self.run_dir = os.path.abspath(os.path.join(base, self.doc["name"], utc_stamp()))
+        self.vm = VM(self.doc["profile"], os.path.join(self.run_dir, "runner.log"), profiles_dir)
         os.makedirs(self.run_dir)
         os.makedirs(os.path.join(self.run_dir, "frames"), exist_ok=True)
-        self.vm = VM(self.doc["profile"], os.path.join(self.run_dir, "runner.log"), profiles_dir)
         self.down, self.serve_timeout = down, serve_timeout
         self.errors = []          # runner-level errors (boot, setup, actions, ...)
         self.steps = []           # timeline rows
