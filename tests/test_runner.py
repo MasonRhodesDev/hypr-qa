@@ -6,6 +6,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -78,6 +79,44 @@ class CliUnexpected(unittest.TestCase):
         with mock.patch.object(runner, "check_run", side_effect=KeyError("x")), \
                 mock.patch("sys.stderr"):
             self.assertEqual(cli.main(["check", "/nonexistent"]), 2)
+
+
+class Kills(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="hqa-test-")
+        self.addCleanup(shutil.rmtree, self.tmp)
+
+    def test_vm_timeout_kills_the_whole_process_group(self):
+        pidf = os.path.join(self.tmp, "pid")
+        os.makedirs(os.path.join(self.tmp, "p", "hang"))
+        vm = os.path.join(self.tmp, "p", "hang", "vm")
+        with open(vm, "w") as f:
+            f.write(f"#!/bin/bash\nbash -c '{sys.executable} -c \"import os,time; open(\\\"{pidf}\\\", \\\"w\\\")"
+                    f".write(str(os.getpid())); time.sleep(5)\"; true'; true\n")
+        os.chmod(vm, 0o755)
+        t0 = time.monotonic()
+        rc, out, err = runner.VM("hang", profiles_dir=os.path.join(self.tmp, "p")).run("x", timeout=1)
+        self.assertIsNone(rc)
+        self.assertLess(time.monotonic() - t0, 4, "run() waited for the orphaned grandchild")
+        pid = int(open(pidf).read())
+        time.sleep(0.2)
+        with open(f"/proc/{pid}/stat") if os.path.exists(f"/proc/{pid}") else open(os.devnull) as f:
+            st = f.read()
+        self.assertTrue(not st or st.rsplit(")", 1)[1].split()[0] == "Z", "grandchild survived the timeout")
+
+    def test_forced_serve_close_cleans_up_the_guest_side_by_exact_name(self):
+        state = os.path.join(self.tmp, "state")
+        os.makedirs(state)
+        scn = os.path.join(self.tmp, "s.toml")
+        with open(scn, "w") as f:
+            f.write('name="k"\nprofile="fake"\n[hyprhands]\nargv=["/usr/local/bin/fake-hyprhands", "serve"]\n'
+                    '[[step]]\nid="a"\ndo={wait_ms=1}\n')
+        with mock.patch.dict(os.environ, {"FAKE_VM_STATE": state, "VMKIT": VMKIT}):
+            r = runner.Runner(scn, runs_dir=os.path.join(self.tmp, "runs"),
+                              profiles_dir=os.path.join(HERE, "fake_profiles"))
+            r.serve = mock.Mock(killed=True, **{"close.return_value": -9})
+            r.stop_serve()
+        self.assertIn("session pkill -x fake-hyprhands", open(os.path.join(state, "calls.log")).read())
 
 
 class LeadIn(unittest.TestCase):

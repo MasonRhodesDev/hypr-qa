@@ -18,6 +18,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -106,15 +107,24 @@ class VM:
     def run(self, *args, step=None, timeout=120):
         """(rc, stdout, stderr); rc None on timeout."""
         t0 = time.monotonic()
+        # Own process group, so a timeout or an interrupt kills vm -> vmkit -> ssh/act.py, not just vm.
+        p = subprocess.Popen(self.argv(*args), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                             errors="replace", env=self.env(step), stdin=subprocess.DEVNULL, start_new_session=True)
         try:
-            p = subprocess.run(self.argv(*args), capture_output=True, text=True, errors="replace", env=self.env(step),
-                               timeout=timeout, stdin=subprocess.DEVNULL)
-            rc, out, err = p.returncode, p.stdout, p.stderr
-        except subprocess.TimeoutExpired as e:
-            rc = None
-            out = e.stdout.decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
-            err = (e.stderr.decode(errors="replace") if isinstance(e.stderr, bytes) else (e.stderr or "")) \
-                + f"\n(timed out after {timeout} s)"
+            out, err = p.communicate(timeout=timeout)
+            rc = p.returncode
+        except subprocess.TimeoutExpired:
+            proto.killpg(p, signal.SIGKILL)
+            try:
+                out, err = p.communicate(timeout=10)
+            except subprocess.TimeoutExpired:   # something outside the group holds the pipes
+                p.kill()
+                out, err = "", ""
+            rc, err = None, (err or "") + f"\n(timed out after {timeout} s)"
+        except BaseException:
+            proto.killpg(p, signal.SIGKILL)
+            p.wait()
+            raise
         dt = time.monotonic() - t0
         self.log(f"$ vm {' '.join(args)}" + (f"   [VMKIT_STEP={step}]" if step else "")
                  + f"\n  rc={rc} {dt:.2f}s\n" + "".join(f"  | {line}\n" for line in (out + err).splitlines()))
@@ -242,6 +252,19 @@ class Runner:
         say(f"hyprhands: {' '.join(hh['argv'])}")
         self.serve = proto.Serve(argv, os.path.join(self.run_dir, "hyprhands-serve.log"),
                                  env=self.vm.env(), timeout=self.serve_timeout)
+
+    def stop_serve(self):
+        if not self.serve:
+            return
+        rc = self.serve.close()
+        if rc not in (0, None):
+            say(f"hyprhands serve exited {rc} (see hyprhands-serve.log)")
+        if self.serve.killed:
+            # Killing the host side drops ssh; make sure the guest side is gone too. By exact
+            # process name (comm, 15 chars), never a pattern that matches this command line.
+            name = os.path.basename(self.doc["hyprhands"]["argv"][0])[:15]
+            say(f"hyprhands serve had to be killed; pkill -x {name} in the guest")
+            self.vm.run("session", "pkill", "-x", name, timeout=60)
 
     def lead_in_s(self):
         """Record this long before step 1, so its most negative `at` has frames."""
@@ -393,10 +416,7 @@ class Runner:
             self.error(f"unexpected error: {type(e).__name__}: {e} (traceback in run.json)")
         finally:
             self.record_stop()
-            if self.serve:
-                rc = self.serve.close()
-                if rc not in (0, None):
-                    say(f"hyprhands serve exited {rc} (see hyprhands-serve.log)")
+            self.stop_serve()
             self.save_state()
         code = evaluate(self.run_dir, self.doc, self.sdir, self.vm)
         if self.down:

@@ -65,6 +65,8 @@ def main(a):
         return 0
     if cmd == "session":
         argv = a[1:]
+        if argv[0] == "pkill":   # guest-side cleanup: never run it on this host
+            return 0
         if argv[0] == "hyprctl":
             t = now(); stamp("ssh", " ".join(argv), t, now())
             print("ok")

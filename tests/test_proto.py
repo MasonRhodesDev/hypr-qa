@@ -1,5 +1,8 @@
 import json
 import os
+import shutil
+import signal
+import tempfile
 import struct
 import sys
 import time
@@ -90,6 +93,41 @@ class AgainstFakeServe(unittest.TestCase):
 
     def test_clean_eof_exit(self):
         self.assertEqual(self.s.close(), 0)
+
+
+HANG = "import os, sys, time; open(sys.argv[1], 'w').write(str(os.getpid())); time.sleep(30)"
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    # a zombie is dead too
+    with open(f"/proc/{pid}/stat") as f:
+        return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+
+
+class Close(unittest.TestCase):
+    def test_close_kills_the_whole_process_group(self):
+        """bash -> bash -> python, like vm -> vmkit -> ssh: a hung serve's descendants die too."""
+        tmp = tempfile.mkdtemp(prefix="hqa-hang-")
+        self.addCleanup(shutil.rmtree, tmp)
+        pidf, script = os.path.join(tmp, "pid"), os.path.join(tmp, "hang.py")
+        with open(script, "w") as f:
+            f.write(HANG)
+        inner = f"{sys.executable} {script} {pidf}; true"
+        s = proto.Serve(["bash", "-c", f"bash -c '{inner}'; true"], timeout=1)
+        deadline = time.monotonic() + 5
+        while not (os.path.exists(pidf) and open(pidf).read()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        pid = int(open(pidf).read())
+        self.addCleanup(lambda: alive(pid) and os.kill(pid, signal.SIGKILL))
+        self.assertFalse(s.request({"op": "x"}, timeout=0.3)["ok"])
+        s.close(timeout=0.3)
+        self.assertTrue(s.killed)
+        time.sleep(0.2)
+        self.assertFalse(alive(pid), "the serve's grandchild survived close()")
 
 
 if __name__ == "__main__":
