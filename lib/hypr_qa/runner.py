@@ -80,6 +80,15 @@ class RunError(Exception):
     pass
 
 
+class Terminated(BaseException):
+    """SIGTERM, raised in the main thread so the run takes its normal cleanup path."""
+
+
+def _on_sigterm(signum, frame):
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)   # once: let the cleanup finish
+    raise Terminated()
+
+
 class VM:
     """The profile's `vm` wrapper. Every call is logged to runner.log."""
 
@@ -184,6 +193,7 @@ class Runner:
         self.skipped = []
         self.serve = None
         self.recording = False
+        self.record_attempted = False   # record start was run (it may have started the recorder)
         self.traceback = None     # an unexpected exception's, if any
         self.actions_path = os.path.join(self.run_dir, "actions.jsonl")
 
@@ -272,6 +282,7 @@ class Runner:
         return max(0.3, -lo / 1e9 + 0.1)
 
     def record_start(self):
+        self.record_attempted = True
         rc, out, err = self.vm.run("record", "start", "--out", self.run_dir, timeout=60)
         if rc != 0:
             raise RunError(f"record start failed: {_tail(out, err)}")
@@ -279,9 +290,9 @@ class Runner:
         say(f"recording -> {self.run_dir}")
 
     def record_stop(self):
-        if not self.recording:
+        if not (self.recording or self.record_attempted):
             return
-        self.recording = False
+        self.recording = self.record_attempted = False
         rc, out, err = self.vm.run("record", "stop", timeout=180)
         line = out.strip().splitlines()[-1] if out.strip() else ""
         say(f"record stop: {line}")
@@ -391,6 +402,13 @@ class Runner:
             time.sleep(wait)
 
     def main(self):
+        old = signal.signal(signal.SIGTERM, _on_sigterm)
+        try:
+            return self._main()
+        finally:
+            signal.signal(signal.SIGTERM, old)
+
+    def _main(self):
         say(f"run {self.doc['name']} -> {self.run_dir}")
         missing = save_scenario(self.path, self.doc, self.run_dir)
         for m in missing:
@@ -410,6 +428,8 @@ class Runner:
             self.error(str(e))
         except KeyboardInterrupt:
             self.error("interrupted")
+        except Terminated:
+            self.error("terminated (SIGTERM)")
         except Exception as e:   # a runner bug: still an error run (exit 2) with results.json
             self.traceback = traceback.format_exc()
             self.vm.log(f"unexpected error:\n{self.traceback}")

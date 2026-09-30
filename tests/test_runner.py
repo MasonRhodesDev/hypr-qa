@@ -4,6 +4,8 @@ found at $VMKIT or ~/repos/vmkit/bin/vmkit; skipped without it."""
 import json
 import os
 import shutil
+import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -244,6 +246,31 @@ class RunnerE2E(unittest.TestCase):
         self.assertIn("Traceback", state["traceback"])
         self.assertIn("ValueError: boom", open(os.path.join(run, "runner.log")).read())
         self.assertIn("record stop", open(os.path.join(self.state, "calls.log")).read())
+
+    def test_record_stop_after_a_failed_start(self):
+        os.environ["FAKE_VM_FAIL"] = "after-start"
+        code, run = self.run_it()
+        self.assertEqual(code, 2)
+        self.assertIn("record stop", open(os.path.join(self.state, "calls.log")).read())
+        self.assertFalse(os.path.exists(os.path.join(self.state, "record.run")), "recorder left running")
+
+    def test_sigterm_takes_the_cleanup_path(self):
+        with open(self.scn, "w") as f:
+            f.write('name="t"\nprofile="fake"\n[[step]]\nid="long"\ndo={wait_ms=20000}\n')
+        p = subprocess.Popen([sys.executable, os.path.join(os.path.dirname(HERE), "bin", "hypr-qa"), "run", self.scn,
+                              "--profiles-dir", os.path.join(HERE, "fake_profiles")],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: p.poll() is None and p.kill())
+        deadline = time.monotonic() + 20
+        while not os.path.exists(os.path.join(self.state, "record.run")) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        time.sleep(0.5)
+        p.send_signal(signal.SIGTERM)
+        self.assertEqual(p.wait(30), 2)
+        self.assertIn("record stop", open(os.path.join(self.state, "calls.log")).read())
+        runs = os.path.join(self.tmp, "runs", "t")
+        res = json.load(open(os.path.join(runs, os.listdir(runs)[0], "results.json")))
+        self.assertTrue(any("terminated" in e for e in res["errors"]), res["errors"])
 
     def test_failed_action_and_stop_on_fail(self):
         os.environ["FAKE_VM_FAIL"] = "meta_l"

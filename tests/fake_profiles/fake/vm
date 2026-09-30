@@ -87,7 +87,7 @@ def main(a):
             open(os.path.join(ST, "record.run"), "w").write(out)
             open(os.path.join(ST, "record.t0"), "w").write(str(now()))
             print(out)
-            return 0
+            return 1 if fail == "after-start" else 0   # the recorder started, then start "failed" (timeout)
         if a[1] == "stop":
             out = rec_run()
             os.unlink(os.path.join(ST, "record.run"))

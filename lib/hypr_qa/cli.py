@@ -48,6 +48,9 @@ def main(argv=None):
     except OSError as e:
         print(f"hypr-qa: {e}", file=sys.stderr)
         return 2
+    except runner.Terminated:
+        print("hypr-qa: terminated (SIGTERM)", file=sys.stderr)
+        return 2
     except Exception:   # a bug, never "check failed" (1) or a pass
         traceback.print_exc()
         print("hypr-qa: unexpected error (exit 2)", file=sys.stderr)
