@@ -72,6 +72,18 @@ do = {{ hyprhands = {{ op = "capture", size = 64 }} }}
 """
 
 
+class LeadIn(unittest.TestCase):
+    def test_covers_the_most_negative_offset(self):
+        tmp = tempfile.mkdtemp(prefix="hqa-test-")
+        self.addCleanup(shutil.rmtree, tmp)
+        scn = os.path.join(tmp, "s.toml")
+        with open(scn, "w") as f:
+            f.write('name="l"\nprofile="fake"\n[[step]]\nid="a"\ndo={wait_ms=1}\n'
+                    '[[step.expect]]\nat="-7s..+0ms"\ncheck="changed"\nregion=[0,0,0,0]\n')
+        r = runner.Runner(scn, runs_dir=os.path.join(tmp, "runs"), profiles_dir=os.path.join(HERE, "fake_profiles"))
+        self.assertGreaterEqual(r.lead_in_s(), 7.1)
+
+
 @unittest.skipUnless(os.access(VMKIT, os.X_OK), f"needs vmkit at {VMKIT}")
 class RunnerE2E(unittest.TestCase):
     def setUp(self):

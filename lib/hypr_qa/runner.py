@@ -241,8 +241,9 @@ class Runner:
                                  env=self.vm.env(), timeout=self.serve_timeout)
 
     def lead_in_s(self):
+        """Record this long before step 1, so its most negative `at` has frames."""
         lo = min((S.at_bounds(e["at"])[0] for st in self.doc["step"] for e in st.get("expect", [])), default=0)
-        return min(5.0, max(0.3, -lo / 1e9 + 0.1))
+        return max(0.3, -lo / 1e9 + 0.1)
 
     def record_start(self):
         rc, out, err = self.vm.run("record", "start", "--out", self.run_dir, timeout=60)
