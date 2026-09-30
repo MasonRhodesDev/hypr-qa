@@ -120,7 +120,7 @@ verified with 40 debugfs samples while the pointer moved, and the same held in t
 spike guest. Setting `no_hardware_cursors` either way doesn't change it. A guest that did put
 the cursor on the hardware plane would drop it from every frame, so the profile's build
 fails if the plane is in use, and `hypr-qa` runs the guest helper `qa-cursor-plane` (exit 0 = unused)
-before any scenario starts.
+right before recording starts (after `[guest]` and `[[setup]]`).
 
 ## Timing resolution
 

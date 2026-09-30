@@ -25,9 +25,9 @@ bin/hypr-qa check RUN --scenario tuned.toml # ... with edited checks
 bin/hypr-qa validate SCENARIO.toml          # schema errors only, no VM
 ```
 
-`run` restores the profile's snapshot through `profiles/<name>/vm`, requires the
-`qa-cursor-plane` precheck to exit 0, applies `[guest] hyprland`, runs `[[setup]]`,
-starts `[hyprhands]` if set, records, performs the steps, and then has vmkit check
+`run` restores the profile's snapshot through `profiles/<name>/vm`, applies
+`[guest] hyprland`, runs `[[setup]]`, starts `[hyprhands]` if set, requires the
+`qa-cursor-plane` precheck to exit 0, records, performs the steps, and then has vmkit check
 the frames and write `report.html`. `results.json` starts with the recorder's
 timing (`degraded`). Options: `--runs-dir` (or `$HYPR_QA_RUNS`), `--down` to power
 the VM off afterwards. vmkit is found through the profile (`$VMKIT` overrides it).

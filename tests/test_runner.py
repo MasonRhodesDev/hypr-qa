@@ -190,6 +190,10 @@ class RunnerE2E(unittest.TestCase):
         calls = open(os.path.join(self.state, "calls.log")).read()
         self.assertIn("session hyprctl eval hl.config({ cursor = { no_hardware_cursors = true } })", calls)
         self.assertIn("keys meta_l q  [step=press]", calls)
+        # the cursor-plane precheck runs after [guest] and [[setup]], right before recording
+        order = [ln.split(" --out")[0] for ln in calls.splitlines()]
+        self.assertLess(order.index("session sh -c true"), order.index("ssh qa-cursor-plane"))
+        self.assertLess(order.index("ssh qa-cursor-plane"), order.index("record start"))
 
         # check RUN_DIR: same verdict from the saved copy; a tuned scenario flips it
         self.assertEqual(runner.check_run(run, profiles_dir=os.path.join(HERE, "fake_profiles")), 0)

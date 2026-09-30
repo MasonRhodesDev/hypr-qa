@@ -1,4 +1,4 @@
-"""Run a scenario: boot, precheck, setup, record, act, check, report.
+"""Run a scenario: boot, setup, precheck, record, act, check, report.
 
 Everything VM-side goes through the profile's `vm` wrapper (profiles/<name>/vm),
 which passes the profile's flags to vmkit. Recording, frame selection, checks
@@ -221,6 +221,9 @@ class Runner:
         rc, out, err = self.vm.run("wait", "ssh", "60", timeout=90)
         if rc != 0:
             raise RunError(f"guest ssh not reachable after restore: {_tail(out, err)}")
+
+    def precheck(self):
+        """Right before recording, after [guest] and [[setup]] (either could move the cursor plane)."""
         rc, out, err = self.vm.run("ssh", "qa-cursor-plane", timeout=60)
         say(f"precheck qa-cursor-plane: {out.strip() or err.strip()} (exit {rc})")
         if rc != 0:
@@ -420,6 +423,7 @@ class Runner:
             self.apply_guest()
             self.setup()
             self.start_serve()
+            self.precheck()
             self.record_start()
             time.sleep(self.lead_in_s())
             self.run_steps()
