@@ -111,12 +111,13 @@ exact-color checks.
 
 ### The cursor
 
-In the spike guest (Hyprland 0.56.2, `-vga virtio`, llvmpipe), Hyprland never used the
-cursor plane. The pointer was in every recorded frame, with `no_hardware_cursors` both true and false.
-A guest that does put the cursor on the hardware plane would drop it from every frame.
-So `hypr-qa` asserts before a scenario runs that the guest's DRM cursor plane has no
-framebuffer (`/sys/kernel/debug/dri/0/state`). Setting
-`[guest] hyprland = { cursor = { no_hardware_cursors = true } }` stays as a harmless belt-and-braces.
+On `plain-hyprland` (Hyprland 0.56.2, `-vga virtio`, llvmpipe, stock cursor settings) the
+DRM cursor plane is never used, so the pointer is drawn into every recorded frame. This was
+verified with 40 debugfs samples while the pointer moved, and the same held in the hypr-DE
+spike guest. Setting `no_hardware_cursors` either way doesn't change it. A guest that did put
+the cursor on the hardware plane would drop it from every frame, so the profile's build
+fails if the plane is in use, and `hypr-qa` runs the guest helper `qa-cursor-plane` (exit 0 = unused)
+before any scenario starts.
 
 ## Timing resolution
 
@@ -153,4 +154,5 @@ Exit code: `0` all passed, `1` a check failed, `2` an error (boot, action, or un
 - v0.1 (2026-09-30): `[guest] hyprland` is a nested table given to `hl.config()` through
   `hyprctl eval`, because Hyprland 0.56 (Lua config) rejects `hyprctl keyword`. `vmkit keys`
   takes one qcode per argument, so write `meta_l ret`, not `super-ret`.
-- v0.2 (2026-09-30): timing resolution and cursor findings from the recording spike.
+- v0.2 (2026-09-30): timing resolution and cursor findings from the recording spike;
+  cursor verified on plain-hyprland.
