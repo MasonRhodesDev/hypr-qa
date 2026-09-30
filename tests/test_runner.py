@@ -276,6 +276,17 @@ class RunnerE2E(unittest.TestCase):
         res = json.load(open(os.path.join(runs, os.listdir(runs)[0], "results.json")))
         self.assertTrue(any("terminated" in e for e in res["errors"]), res["errors"])
 
+    def test_hyprctl_ok_reply_commands_need_ok(self):
+        code, run = self.run_it('name="h"\nprofile="fake"\n[[step]]\nid="kw"\n'
+                                'do={hyprctl=["keyword", "general:gaps_in", "0"]}\n'
+                                '[[step]]\nid="ver"\ndo={hyprctl=["version"]}\n')
+        self.assertEqual(code, 2)
+        res = json.load(open(os.path.join(run, "results.json")))
+        st = {r["step"]: r for r in res["steps"]}
+        self.assertFalse(st["kw"]["ok"])
+        self.assertIn("keyword can't work", st["kw"]["error"])
+        self.assertTrue(st["ver"]["ok"])
+
     def test_failed_action_and_stop_on_fail(self):
         os.environ["FAKE_VM_FAIL"] = "meta_l"
         code, run = self.run_it("stop_on_fail = true\n" + SCENARIO)

@@ -33,6 +33,9 @@ EXIT_PASS, EXIT_FAIL, EXIT_ERROR = 0, 1, 2
 VIDEO_NOTE = ("video.mkv is for watching only: it plays at the nominal rate, so stalls don't show in it. "
               "Timing comes from frames.jsonl (and the frame PNGs).")
 FRAME_FILE = re.compile(r"^\d{6}\.png$")
+# hyprctl commands that reply exactly "ok" on success. Hyprland 0.56.2 exits 7 on eval and
+# dispatch errors, but refuses `keyword` with exit 0, so the reply is checked too (as hyprhands does).
+HYPRCTL_OK_REPLY = ("dispatch", "eval", "keyword")
 
 
 def utc_stamp():
@@ -338,6 +341,10 @@ class Runner:
         elif kind == "hyprctl":
             detail = "hyprctl " + " ".join(v)
             row = self._vm_action(st, ["session", "hyprctl", *v], detail, kind)
+            cmd = next((a for a in v if not a.startswith("-")), None)
+            if row["ok"] and cmd in HYPRCTL_OK_REPLY and "--batch" not in v and row.get("stdout") != "ok":
+                row["ok"] = False
+                row["error"] = f"hyprctl {cmd} replied {row.get('stdout', '')[:300]!r}, not 'ok'"
         elif kind == "wait_ms":
             detail = f"{v}ms"
             t = time.monotonic_ns()

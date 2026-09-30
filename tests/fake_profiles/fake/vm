@@ -69,7 +69,10 @@ def main(a):
             return 0
         if argv[0] == "hyprctl":
             t = now(); stamp("ssh", " ".join(argv), t, now())
-            print("ok")
+            if argv[1:2] == ["keyword"]:   # Hyprland 0.56: refused, yet exit 0
+                print("keyword can't work with non-legacy parsers. Use eval.")
+            else:
+                print("ok")
             return 0
         if os.environ.get("VMKIT_STEP"):
             t = now(); rc = subprocess.call(argv); stamp("ssh", " ".join(argv), t, now(), rc == 0)
