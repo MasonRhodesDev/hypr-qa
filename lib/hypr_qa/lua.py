@@ -10,7 +10,7 @@ _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 RESERVED = frozenset(
     "and break do else elseif end false for function goto if in local nil not or repeat return then true "
     "until while".split())
-_ESC = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t", "\0": "\\0"}
+_ESC = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
 
 
 class LuaError(ValueError):

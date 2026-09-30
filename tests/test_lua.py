@@ -16,6 +16,7 @@ class Lua(unittest.TestCase):
     def test_string_escapes(self):
         self.assertEqual(lua_string('a"b\\c\nd\te'), '"a\\"b\\\\c\\nd\\te"')
         self.assertEqual(lua_string("\x01"), '"\\001"')
+        self.assertEqual(lua_string("a\x001"), '"a\\0001"')   # NUL then a digit: padded, not \01
         self.assertEqual(lua_string("ünï"), '"ünï"')
 
     def test_nested_table_from_toml(self):
