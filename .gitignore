@@ -1,0 +1,6 @@
+.vmkit/
+*.qcow2
+*.img
+*.iso
+runs/
+__pycache__/

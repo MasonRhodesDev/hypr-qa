@@ -1,0 +1,77 @@
+# Illustrative only: the hyprhands session owns the real scenario (in hyprhands' tests/qa).
+# Answers "is the overlay visible at all?" with model-free checks on recorded frames.
+# Colours and sizes are from hyprhands src/overlay.rs (branch overlay).
+
+name     = "hyprhands-overlay"
+profile  = "plain-hyprland"
+snapshot = "session-ready"
+
+[guest]
+hyprland = { "cursor:no_hardware_cursors" = true }  # so the robot cursor lands in frames
+
+[[setup]]
+push = { src = "../hyprhands/target/release/hyprhands", dst = "/usr/local/bin/hyprhands", mode = "0755" }
+
+[hyprhands]
+argv = ["hyprhands", "serve", "--monitor", "Virtual-1"]
+
+# Baseline: before hyprhands acts, nothing of the overlay is on screen.
+[[step]]
+id = "baseline"
+do = { wait_ms = 300 }
+
+  [[step.expect]]
+  at = "+0ms"
+  check = "pixel"
+  region = [0, 0, 0, 4]            # the top 4 px edge, full width
+  color = "#00b4ff"
+  tolerance = 40
+  min_fraction = 0.5
+  not = true
+
+# The first driven action should raise the 4 px driving frame (0x00b4ff at 0xe6 alpha).
+[[step]]
+id = "click-middle"
+do = { hyprhands = { op = "click", x = 640, y = 400 } }
+settle_ms = 800
+
+  [[step.expect]]                  # frame: top edge
+  at = "+0ms..+500ms"
+  anchor = "ack"
+  check = "pixel"
+  region = [0, 0, 0, 4]
+  color = "#00b4ff"
+  tolerance = 40
+  min_fraction = 0.9
+
+  [[step.expect]]                  # click ring (64 px, fades over 420 ms): something changed at the click
+  at = "+0ms..+200ms"
+  anchor = "ack"
+  check = "changed"
+  region = [600, 360, 80, 80]
+  min_px = 200
+
+  [[step.expect]]                  # ring gone again
+  at = "+600ms"
+  anchor = "ack"
+  check = "pixel"
+  region = [600, 360, 80, 80]
+  color = "#00b4ff"
+  tolerance = 40
+  min_fraction = 0.02
+  not = true
+
+  [[step.expect]]                  # caption at the bottom (18 px text, stays 4 s)
+  at = "+100ms..+1500ms"
+  anchor = "ack"
+  check = "ocr"
+  region = [0, -120, 0, 120]
+  text = "click 640, 400"
+
+  [[step.expect]]                  # robot cursor near the click point
+  at = "+0ms..+500ms"
+  anchor = "ack"
+  check = "template"
+  image = "templates/hyprhands-cursor.png"
+  near = [640, 400]
+  radius = 48
