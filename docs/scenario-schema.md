@@ -78,7 +78,7 @@ Exactly one key per step:
 | `hyprhands` | a request object as in hyprhands `src/proto.rs` (`{op = "...", ...args}`) | the runner's `hyprhands serve` session over ssh |
 | `vmkit`     | argv for a vmkit input command, e.g. `["click", "640", "400"]`, `["keys", "meta_l", "ret"]` (one QMP qcode per argument, pressed together), `["type", "hello"]` | QMP, host side |
 | `session`   | a shell command run in the guest's Hyprland session (Wayland/Hyprland/DBus env imported) | ssh |
-| `hyprctl`   | argv after `hyprctl`, e.g. `["eval", "hl.dsp.focus({workspace=2})"]`. On Hyprland 0.56, `dispatch`/`eval`/`keyword` must reply exactly `ok` (a refused `keyword` still exits 0) | ssh, in session |
+| `hyprctl`   | argv after `hyprctl`, e.g. `["eval", "hl.config({cursor={no_hardware_cursors=true}})"]`. On Hyprland 0.56, `dispatch`/`eval`/`keyword` must reply exactly `ok` (a refused `keyword` still exits 0) | ssh, in session |
 | `wait_ms`   | an integer; no action, only a timestamped marker | host |
 
 A failed action (error reply, nonzero exit) fails the step and records the error; later
