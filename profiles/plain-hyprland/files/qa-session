@@ -1,0 +1,17 @@
+#!/bin/sh
+# qa-session CMD... — run CMD inside the running Hyprland session of the
+# calling user, with the session env resolved from /run/user/$UID (does not
+# depend on the session having exported anything to systemd --user).
+uid=$(id -u)
+export XDG_RUNTIME_DIR="/run/user/$uid"
+sig=$(ls -t "$XDG_RUNTIME_DIR/hypr" 2>/dev/null | head -n1)
+if [ -z "$sig" ]; then
+    echo "qa-session: no Hyprland instance under $XDG_RUNTIME_DIR/hypr" >&2
+    exit 1
+fi
+export HYPRLAND_INSTANCE_SIGNATURE="$sig"
+wl=$(ls "$XDG_RUNTIME_DIR" 2>/dev/null | grep -E '^wayland-[0-9]+$' | head -n1)
+export WAYLAND_DISPLAY="${wl:-wayland-1}"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=Hyprland
+exec "$@"

@@ -1,0 +1,5 @@
+
+# hypr-qa: log the qa user straight into Hyprland on boot (test VM only).
+[initial_session]
+command = "/usr/bin/start-hyprland"
+user = "qa"

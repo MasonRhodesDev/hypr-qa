@@ -1,0 +1,63 @@
+#cloud-config
+# plain-hyprland seed. `build` substitutes the @...@ placeholders.
+hostname: plain-hyprland
+users:
+  - name: qa
+    gecos: hypr-qa
+    groups: [wheel, video, input]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: false
+    passwd: '@PASSWD_HASH@'
+    ssh_authorized_keys:
+      - @SSH_PUBKEY@
+ssh_pwauth: false
+chpasswd:
+  expire: false
+growpart:
+  mode: auto
+  devices: ['/']
+resize_rootfs: true
+package_update: false
+write_files:
+  - path: /usr/local/sbin/hypr-qa-provision
+    permissions: '0755'
+    encoding: b64
+    content: @PROVISION_B64@
+  - path: /usr/local/bin/qa-session
+    permissions: '0755'
+    encoding: b64
+    content: @QA_SESSION_B64@
+  - path: /usr/local/share/hypr-qa/hyprland-qa.lua
+    permissions: '0644'
+    encoding: b64
+    content: @HYPRLAND_QA_B64@
+  - path: /usr/local/share/hypr-qa/greetd-autologin.toml
+    permissions: '0644'
+    encoding: b64
+    content: @GREETD_B64@
+  - path: /usr/local/share/hypr-qa/foot.ini
+    permissions: '0644'
+    encoding: b64
+    content: @FOOT_INI_B64@
+  - path: /etc/systemd/system/hypr-qa-provision.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=hypr-qa plain-hyprland first-boot provisioning
+      Wants=network-online.target
+      After=network-online.target pacman-init.service
+      ConditionPathExists=!/var/lib/hypr-qa/provisioned
+
+      [Service]
+      Type=oneshot
+      TimeoutStartSec=1h
+      StandardOutput=journal+console
+      StandardError=journal+console
+      ExecStart=/usr/local/sbin/hypr-qa-provision
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+runcmd:
+  - [systemctl, enable, --now, --no-block, hypr-qa-provision.service]
