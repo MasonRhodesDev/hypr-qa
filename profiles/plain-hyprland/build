@@ -15,7 +15,7 @@
 #    save the `session-ready` snapshot, shut down
 #
 # Destroys any previous overlay (and its snapshots); keeps cached base images.
-# Run heavy: everything here is nice 19 / ionice idle.
+# Run heavy: everything here is nice 19 at ionice class $HQA_IONICE_CLASS (profile.env).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -66,8 +66,8 @@ else
     echo "   downloading $latest"
     want=$(curl -fsSL "$ARCH_IMAGES_URL/$latest.SHA256" | awk '{print $1}')
     [ -n "$want" ] || die "no checksum for $latest"
-    nice -n 19 ionice -c3 curl -fL --progress-bar "$ARCH_IMAGES_URL/$latest" -o "$BASE.partial"
-    got=$(nice -n 19 ionice -c3 sha256sum "$BASE.partial" | awk '{print $1}')
+    nice -n 19 ionice -c "$HQA_IONICE_CLASS" curl -fL --progress-bar "$ARCH_IMAGES_URL/$latest" -o "$BASE.partial"
+    got=$(nice -n 19 ionice -c "$HQA_IONICE_CLASS" sha256sum "$BASE.partial" | awk '{print $1}')
     [ "$got" = "$want" ] || { rm -f "$BASE.partial"; die "sha256 mismatch for $latest"; }
     mv "$BASE.partial" "$BASE"
     chmod a-w "$BASE"   # overlays point at it; it must never change

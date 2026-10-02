@@ -125,8 +125,20 @@ NTP sync through QEMU user networking can take over a minute. Provisioning
 masks that unit, so later boots don't wait: session and ssh are up about
 15 s after power-on.
 
-Everything runs under `nice -n 19 ionice -c3`. vmkit adds `nice` to qemu, and
-`vm up` adds `ionice`.
+Everything runs under `nice -n 19` at ionice class `HQA_IONICE_CLASS` (default
+2, best-effort), which `vm up` also hands to vmkit (`--ionice`; vmkit applies its
+own class to qemu and defaults to idle). Not the idle class: on a shared host
+such as the dev CT, idle I/O is starved outright (a 3 GB `loadvm` crawled at
+~1 MB/s under ~80% I/O pressure); set `HQA_IONICE_CLASS=3` on a quiet machine.
+
+When the host's disk is saturated by other work (the dev CT shares the tower's
+cache disk with downloads, transcodes and NFS), even best-effort I/O leaves the
+guest and the recorder starved: ssh takes 40 s and recordings get holes. Run
+from RAM instead: copy `base/` and the profile dir to `/dev/shm/hypr-qa`, point
+the overlay at the copy with `qemu-img rebase -u -b <copy of the base> -F qcow2`,
+and run with `HQA_VMS=/dev/shm/hypr-qa` and `--runs-dir` under `/dev/shm` (the
+images are ~3.4 GB, plus the guest's RAM). The snapshot's RAM size is fixed, so
+keep `MEM` at what it was saved with.
 
 ## Use
 

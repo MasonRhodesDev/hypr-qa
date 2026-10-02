@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # vm — drive the plain-hyprland guest through vmkit with this profile's flags.
 #
-#   vm up                  boot (headless, VNC :32, ssh 2232), niced + ionice idle
+#   vm up                  boot (headless, VNC :32, ssh 2232), niced, ionice class $HQA_IONICE_CLASS
 #   vm restore [NAME]      boot if needed, then load snapshot NAME (session-ready)
 #   vm snapshot NAME       save a snapshot (internal, in the overlay)
 #   vm snapshots           list snapshots (HMP `info snapshots`, or qemu-img if down)
@@ -52,14 +52,15 @@ cmd_up() {
     [ -f "$SEED" ] || { echo "vm: no seed ISO at $SEED; run build first" >&2; return 1; }
     mkdir -p "$VMKIT_DIR"
     # vmkit backgrounds qemu; never pipe its stdout (qemu would hold the pipe).
-    # setsid detaches qemu from this shell/ssh session; ionice -c3 is inherited.
-    setsid -w nice -n 19 ionice -c3 "$VMKIT" --overlay "$OVERLAY" --cidata "$SEED" --dir "$VMKIT_DIR" \
+    # setsid detaches qemu from this shell/ssh session; the ionice class is inherited.
+    setsid -w nice -n 19 ionice -c "$HQA_IONICE_CLASS" "$VMKIT" --ionice "$HQA_IONICE_CLASS" --overlay "$OVERLAY" --cidata "$SEED" --dir "$VMKIT_DIR" \
         --ssh-port "$SSH_PORT" --ssh-user "$QA_USER" --ssh-key "$SSH_KEY" \
         --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" up \
         >"$VMKIT_DIR/up.log" 2>&1 </dev/null
     cat "$VMKIT_DIR/up.log"
     local i
-    for i in $(seq 1 50); do qmp_alive && return 0; sleep 0.2; done
+    # Up to 60 s: on a busy host qemu can take well over 10 s to open its QMP socket.
+    for i in $(seq 1 300); do qmp_alive && return 0; sleep 0.2; done
     echo "vm: qemu did not come up; see $VMKIT_DIR/up.log" >&2; return 1
 }
 
@@ -80,8 +81,19 @@ cmd_snapshot() {
 cmd_restore() {
     local name="${1:-$SNAPSHOT}" out
     cmd_up
-    out=$(hmp "loadvm $name" 2>&1) || { echo "vm: loadvm $name failed: $out" >&2; return 1; }
-    if [ -n "$out" ]; then echo "vm: loadvm $name: $out" >&2; return 1; fi
+    # Like savevm, a large RAM image can outlast vmkit's 30 s QMP socket timeout
+    # on a busy host. QMP runs one command at a time, so after a client timeout
+    # the load is still running: wait (up to 5 min) until the monitor answers
+    # again, which is when loadvm has finished.
+    if out=$(hmp "loadvm $name" 2>&1); then
+        if [ -n "$out" ]; then echo "vm: loadvm $name: $out" >&2; return 1; fi
+    elif printf '%s' "$out" | grep -q 'TimeoutError\|timed out'; then
+        local i
+        for i in $(seq 1 60); do qmp_alive && break; sleep 5; done
+        qmp_alive || { echo "vm: loadvm $name: no answer after 5 min" >&2; return 1; }
+    else
+        echo "vm: loadvm $name failed: $out" >&2; return 1
+    fi
     echo "restored $name"
     # The guest clock resumes at snapshot time; the emulated RTC follows the
     # host, so resync from it (best effort). Without VMKIT_STEP: a `restore` step
