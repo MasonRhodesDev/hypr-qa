@@ -164,6 +164,11 @@ case "$errs" in
     *) printf '%s\n' "$errs" >&2; die "Hyprland reports config errors" ;;
 esac
 "$VM" session hyprctl version | head -n1 | sed 's/^/   /'
+# Authorization prompts need the session's polkit agent and AccountsService.
+"$VM" wait exec 'pgrep -u qa -f polkit-gnome-authentication-agent-1' 30 >/dev/null \
+    || die "the polkit agent (polkit-gnome) is not running in the session"
+"$VM" ssh 'busctl --system call org.freedesktop.Accounts /org/freedesktop/Accounts org.freedesktop.Accounts FindUserByName s qa' \
+    | sed 's/^/   accounts: /' || die "AccountsService does not answer"
 for opt in animations:enabled misc:disable_hyprland_logo misc:disable_splash_rendering \
            ecosystem:no_update_news ecosystem:no_donation_nag; do
     echo "   $opt: $("$VM" session hyprctl -j getoption "$opt" | python3 -c 'import json,sys; o=json.load(sys.stdin); print({k:v for k,v in o.items() if k!="option"})')"

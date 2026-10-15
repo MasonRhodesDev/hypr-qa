@@ -9,12 +9,12 @@ the KVM host (mason-desktop), never on the desktop you're working at.
 | | |
 |---|---|
 | Base | newest Arch Linux cloud image (`Arch-Linux-x86_64-cloudimg-<build>.qcow2`), sha256-verified, cached read-only under `~/vms/hypr-qa/base/`, fully upgraded (`pacman -Syu`) at build time |
-| Packages | `hyprland` (0.56.2 at the first build), `mesa` (llvmpipe; virtio-vga has no 3D), `foot`, `ttf-dejavu` (so OCR has a real font), `adwaita-cursors` (a real pointer, see Pointer theme below), `greetd` |
+| Packages | `hyprland` (0.56.2 at the first build), `mesa` (llvmpipe; virtio-vga has no 3D), `foot`, `ttf-dejavu` (so OCR has a real font), `adwaita-cursors` (a real pointer, see Pointer theme below), `greetd`, `accountsservice` and `polkit-gnome` (see Authorization below) |
 | Terminal | foot, `~qa/.config/foot/foot.ini` sets `DejaVu Sans Mono:size=14`: at foot's default size 10, tesseract misreads its light-on-dark text at 1280x800 |
 | User | `qa`, password `qa`, passwordless sudo, the host's `~/.ssh/id_ed25519.pub` in `authorized_keys` (ssh password login off) |
 | Login | greetd `[initial_session]` runs `/usr/bin/start-hyprland` as `qa` on every boot; the shipped `default_session` (agreety on tty1) is left as it was |
 | Display | virtio-vga, output `Virtual-1`, pinned to `1280x800@60`, scale 1 (the virtio default mode, set explicitly as well) |
-| Hyprland config | `~qa/.config/hypr/hyprland.lua` = the installed `/usr/share/hypr/hyprland.lua` with `terminal = "foot"`, plus [`files/hyprland-qa.lua`](files/hyprland-qa.lua): `XCURSOR_THEME=Adwaita`, `XCURSOR_SIZE=24` (`hl.env`), `ecosystem { no_update_news, no_donation_nag }`, `misc { disable_hyprland_logo, disable_splash_rendering, force_default_wallpaper = 0 }`, `animations { enabled = false }` |
+| Hyprland config | `~qa/.config/hypr/hyprland.lua` = the installed `/usr/share/hypr/hyprland.lua` with `terminal = "foot"`, plus [`files/hyprland-qa.lua`](files/hyprland-qa.lua): `XCURSOR_THEME=Adwaita`, `XCURSOR_SIZE=24` (`hl.env`), `ecosystem { no_update_news, no_donation_nag }`, `misc { disable_hyprland_logo, disable_splash_rendering, force_default_wallpaper = 0 }`, `animations { enabled = false }`, and the polkit-gnome agent started on `hyprland.start` |
 | Snapshot | `session-ready`: an internal snapshot in the overlay, taken with the session up, no windows open, the screen settled |
 | USB power | `/etc/udev/rules.d/99-hypr-qa-usb-no-autosuspend.rules` sets `power/control=on` for every USB device. Otherwise QEMU's usb-kbd autosuspends after 2 s idle, and the next key press takes ~130 ms instead of ~36 ms (measured by the recording spike). The build checks that the keyboard is still `active` after 6 s idle |
 | Pointer theme | Adwaita at 24 px (`adwaita-cursors` in `/usr/share/icons`, `XCURSOR_THEME`/`XCURSOR_SIZE` set with `hl.env`, which runs before Hyprland creates its cursor manager). Without a theme, Hyprland draws its built-in 32x32 fallback pointer (a 25x31 droplet on screen). `default-cursors` already has `/usr/share/icons/default` inherit Adwaita. `cursor:enable_hyprcursor` stays at its default: no hyprcursor theme is installed, so the log's `Hyprcursor failed loading theme ..., falling back to XCursor` is expected |
@@ -29,6 +29,28 @@ options with `eval`:
 vm session hyprctl eval 'hl.config({ cursor = { no_hardware_cursors = true } })'
 vm session hyprctl eval 'hl.config({ animations = { enabled = true } })'
 ```
+
+### Authorization
+
+Apps that change the system (AccountsService, hostnamed, timedated, localed,
+pkexec) ask polkit, and polkit asks the session's agent. The session starts
+polkit-gnome's agent, so a privileged action opens its "Authenticate" dialog
+(a window titled `Authenticate`, class `polkit-gnome-authentication-agent-1`)
+with the password field focused. `qa` is in `wheel`, so polkit's `auth_admin`
+accepts qa's own password: a scenario answers with `vmkit type qa` and
+`vmkit keys ret`, or presses `esc` to cancel. Without an agent, polkit denies
+at once with "not authorized". The build checks that the agent runs and that
+AccountsService answers on the system bus.
+
+Most of these actions are `auth_admin_keep`: after one answer, the same
+process isn't asked again for five minutes, so whether a later action prompts
+depends on timing. A scenario that needs every action to prompt can install
+a rule in `[[setup]]` that returns `polkit.Result.AUTH_ADMIN` for them.
+
+Not hyprpolkitagent: 0.2.0 (hyprtoolkit 0.6.0) segfaults in
+`CWaylandBuffer` while sizing its swapchain on virtio-vga, which has no 3D and
+so no GPU buffers, as soon as it shows a dialog; polkit then denies the
+request.
 
 ### Changing the pointer theme
 

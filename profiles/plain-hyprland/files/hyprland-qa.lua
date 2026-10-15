@@ -40,3 +40,13 @@ hl.config({
         enabled = false,
     },
 })
+
+-- A polkit agent, as on a real desktop: apps that ask for authorization
+-- (AccountsService, hostnamed, timedated, localed, pkexec) get a password
+-- dialog that a scenario answers with qa's password. Without one, polkit
+-- denies outright. polkit-gnome, not hyprpolkitagent: hyprpolkitagent 0.2.0
+-- segfaults in hyprtoolkit's swapchain setup on virtio-vga (no 3D, so no GPU
+-- buffers) the moment it shows a dialog.
+hl.on("hyprland.start", function()
+    hl.exec_cmd("/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1")
+end)
