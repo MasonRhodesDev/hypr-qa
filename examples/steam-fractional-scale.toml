@@ -1,0 +1,79 @@
+# Does desktop Steam come out crisp on a fractionally scaled head? Two heads, two scales
+# (Virtual-1 at 1.5, Virtual-2 at 1.0), Steam's login window (no account needed).
+#
+#   bin/hypr-qa run examples/steam-fractional-scale.toml
+#
+# Step 1 is the baseline (Hyprland upscales Steam's X11 window); step 2 turns on zero
+# scaling and gives Steam a launch-time scale factor, so it draws at 1.5 itself. The checks
+# only look at head 0 (the 1.5 head): the login label is readable in both, and in step 2 the
+# scale variable has reached every webhelper process. Stills of both heads are saved by vmkit (`shot`, named
+# below) next to the VM's work dir for comparing by eye.
+#
+# Needs the steam-two-head profile (Steam installed and bootstrapped, two heads).
+
+name     = "steam-fractional-scale"
+profile  = "steam-two-head"
+head     = 0
+
+[[setup]]
+session = "pkill -x steam; pkill -x steamwebhelper; true"
+
+# 1. baseline: no zero scaling, no scale variable.
+[[step]]
+id = "baseline-launch"
+do = { session = "DISPLAY=:0 setsid steam >/dev/null 2>&1 </dev/null & disown; true" }
+
+[[step]]
+id = "baseline-window"                  # wait for the login window, then let it settle
+do = { session = "for i in $(seq 1 180); do hyprctl -j clients | grep -q '\"class\": \"steam\"' && exit 0; sleep 1; done; exit 1" }
+settle_ms = 4000
+
+  [[step.expect]]
+  at = "+0ms"
+  anchor = "ack"
+  check = "ocr"
+  region = [0, 0, 0, 0]
+  text = "sign in"
+
+[[step]]
+id = "baseline-shot-head1"
+do = { vmkit = ["shot", "steam-baseline-head1"] }
+[[step]]
+id = "baseline-shot-head2"
+do = { vmkit = ["--head", "1", "shot", "steam-baseline-head2"] }
+
+[[step]]
+id = "stop-1"
+do = { session = "pkill -x steam; pkill -x steamwebhelper; sleep 3; true" }
+
+# 2. zero scaling + the variable at launch.
+[[step]]
+id = "zero-scaling"
+do = { hyprctl = ["eval", "hl.config({ xwayland = { force_zero_scaling = true } })"] }
+settle_ms = 4000                        # XWayland restarts
+
+[[step]]
+id = "scaled-launch"
+do = { session = "DISPLAY=:0 SDL_VIDEO_X11_SCALING_FACTOR=1.5 setsid steam >/dev/null 2>&1 </dev/null & disown; true" }
+
+[[step]]
+id = "scaled-window"
+do = { session = "for i in $(seq 1 180); do hyprctl -j clients | grep -q '\"class\": \"steam\"' && exit 0; sleep 1; done; exit 1" }
+settle_ms = 4000
+
+  [[step.expect]]
+  at = "+0ms"
+  anchor = "ack"
+  check = "ocr"
+  region = [0, 0, 0, 0]
+  text = "sign in"
+
+[[step]]
+id = "scaled-shot-head1"
+do = { vmkit = ["shot", "steam-scaled-head1"] }
+[[step]]
+id = "scaled-env"                       # the variable reached the webhelper (it is not dropped by the runtime container)
+do = { session = "for p in $(pgrep -x steamwebhelper); do tr '\\0' '\\n' </proc/$p/environ | grep -qx SDL_VIDEO_X11_SCALING_FACTOR=1.5 || exit 1; done" }
+[[step]]
+id = "stop-2"
+do = { session = "pkill -x steam; pkill -x steamwebhelper; sleep 3; true" }
