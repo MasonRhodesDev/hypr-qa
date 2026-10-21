@@ -83,6 +83,19 @@ class CliUnexpected(unittest.TestCase):
             self.assertEqual(cli.main(["check", "/nonexistent"]), 2)
 
 
+class HeadEnv(unittest.TestCase):
+    def test_head_reaches_vmkit_through_the_environment(self):
+        d = os.path.join(os.path.dirname(__file__), "fake_profiles")
+        vm = runner.VM(os.listdir(d)[0], profiles_dir=d, head=1)
+        self.assertEqual(vm.env()["VMKIT_HEAD"], "1")
+        self.assertEqual(vm.env(step="s")["VMKIT_STEP"], "s")
+
+    def test_head_zero_leaves_the_environment_alone(self):
+        d = os.path.join(os.path.dirname(__file__), "fake_profiles")
+        vm = runner.VM(os.listdir(d)[0], profiles_dir=d)
+        self.assertNotIn("VMKIT_HEAD", {k: v for k, v in vm.env().items() if k not in os.environ})
+
+
 class Kills(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="hqa-test-")

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# vm for steam-two-head: plain-hyprland's vm with this profile's settings.
+here="$(cd "$(dirname "$0")" && pwd)"
+export HQA_PROFILE_ENV="$here/profile.env" HQA_VM="$here/vm"
+exec "$here/../plain-hyprland/vm" "$@"

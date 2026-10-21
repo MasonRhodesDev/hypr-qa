@@ -193,7 +193,7 @@ def validate_expect(e, where):
 
 ACTIONS = ("hyprhands", "vmkit", "session", "hyprctl", "wait_ms")
 SETUP = ("push", "session")
-TOP = {"name", "profile", "snapshot", "stop_on_fail", "guest", "setup", "hyprhands", "step"}
+TOP = {"name", "profile", "snapshot", "head", "stop_on_fail", "guest", "setup", "hyprhands", "step"}
 
 
 def action_kind(do):
@@ -231,6 +231,8 @@ def validate(doc):
             raise ScenarioError(f"scenario: {k} must match {NAME_RE.pattern} (it names a directory), got {doc[k]!r}")
     if "snapshot" in doc:
         _str(doc["snapshot"], "scenario", "snapshot")
+    if "head" in doc:
+        _nonneg_int(doc["head"], "scenario", "head")
     if "stop_on_fail" in doc and not isinstance(doc["stop_on_fail"], bool):
         raise ScenarioError(f"scenario: stop_on_fail must be true or false, got {doc['stop_on_fail']!r}")
     if "guest" in doc:

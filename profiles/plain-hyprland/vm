@@ -15,12 +15,13 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=profile.env
-. "$HERE/profile.env"
+. "${HQA_PROFILE_ENV:-$HERE/profile.env}"
 
 vk() {
     "$VMKIT" --overlay "$OVERLAY" --cidata "$SEED" --dir "$VMKIT_DIR" \
         --ssh-port "$SSH_PORT" --ssh-user "$QA_USER" --ssh-key "$SSH_KEY" \
-        --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" "$@"
+        --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" \
+        --heads "$HEADS" ${GPU_OPTS:+$(printf -- '--gpu-opt %s ' $GPU_OPTS)} "$@"
 }
 
 # vmkit's snapshot/restore send savevm/loadvm as QMP commands, which modern
@@ -55,13 +56,24 @@ cmd_up() {
     # setsid detaches qemu from this shell/ssh session; the ionice class is inherited.
     setsid -w nice -n 19 ionice -c "$HQA_IONICE_CLASS" "$VMKIT" --ionice "$HQA_IONICE_CLASS" --overlay "$OVERLAY" --cidata "$SEED" --dir "$VMKIT_DIR" \
         --ssh-port "$SSH_PORT" --ssh-user "$QA_USER" --ssh-key "$SSH_KEY" \
-        --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" up \
+        --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" \
+        --heads "$HEADS" ${GPU_OPTS:+$(printf -- '--gpu-opt %s ' $GPU_OPTS)} up \
         >"$VMKIT_DIR/up.log" 2>&1 </dev/null
     cat "$VMKIT_DIR/up.log"
     local i
     # Up to 60 s: on a busy host qemu can take well over 10 s to open its QMP socket.
-    for i in $(seq 1 300); do qmp_alive && return 0; sleep 0.2; done
+    for i in $(seq 1 300); do qmp_alive && { cmd_head_sizes; return; }; sleep 0.2; done
     echo "vm: qemu did not come up; see $VMKIT_DIR/up.log" >&2; return 1
+}
+
+# Heads past the first stay disconnected in the guest until sized; HEAD_SIZES is
+# the WxH of heads 1.., in order. Done after every up, before the guest looks.
+cmd_head_sizes() {
+    local h=1 size
+    for size in ${HEAD_SIZES:-}; do
+        vk head-size "$h" "$size" 2.0 || { echo "vm: could not size head $h to $size" >&2; return 1; }
+        h=$((h + 1))
+    done
 }
 
 cmd_snapshot() {

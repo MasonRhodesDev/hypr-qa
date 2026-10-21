@@ -71,6 +71,12 @@ class Validate(unittest.TestCase):
         d = doc()
         self.assertEqual(d["step"][0]["id"], "s1")
 
+    def test_head(self):
+        self.assertEqual(doc(extra_top="head = 1\n")["head"], 1)
+        for bad in ("-1", '"1"', "true"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(S.ScenarioError, r"head must be an integer"):
+                doc(extra_top=f"head = {bad}\n")
+
     def test_unknown_top_key(self):
         with self.assertRaisesRegex(S.ScenarioError, r"scenario: unknown key 'nmae'"):
             doc(extra_top='nmae = "x"\n')
