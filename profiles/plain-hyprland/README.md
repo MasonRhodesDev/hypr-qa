@@ -94,6 +94,15 @@ check by hand:
 vm ssh 'sudo mount -t debugfs none /sys/kernel/debug 2>/dev/null; sudo cat /sys/kernel/debug/dri/0/state' | grep -A2 '^plane'
 ```
 
+## Derived profiles and more than one head
+
+A profile directory with its own `profile.env` (set `PROFILE`, source this profile's, override what
+differs) and thin `build`/`vm` wrappers that set `HQA_PROFILE_ENV` and `HQA_VM` can reuse this build.
+`profile.env` knows `HEADS`, `GPU_OPTS`, `HEAD_SIZES`, `POINTER_AREA`, `EXPECT_MONITORS` (what build
+asserts for the outputs) and `HQA_EXTRA_DIR` (extra packages, scripts and Hyprland config); see
+[`steam-two-head`](../steam-two-head/README.md) for a worked one. The defaults here are the
+single-head guest, unchanged.
+
 ## Host side
 
 | | |
