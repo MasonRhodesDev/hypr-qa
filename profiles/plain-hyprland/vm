@@ -21,7 +21,8 @@ vk() {
     "$VMKIT" --overlay "$OVERLAY" --cidata "$SEED" --dir "$VMKIT_DIR" \
         --ssh-port "$SSH_PORT" --ssh-user "$QA_USER" --ssh-key "$SSH_KEY" \
         --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" \
-        --heads "$HEADS" ${GPU_OPTS:+$(printf -- '--gpu-opt %s ' $GPU_OPTS)} "$@"
+        --heads "$HEADS" ${GPU_OPTS:+$(printf -- '--gpu-opt %s ' $GPU_OPTS)} \
+        ${POINTER_AREA:+--pointer-area "$POINTER_AREA"} "$@"
 }
 
 # vmkit's snapshot/restore send savevm/loadvm as QMP commands, which modern
