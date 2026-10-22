@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# install-desktop-boot — put a desktop-boot checkout (any branch) and a vigil build
+# into the running desktop-boot guest, with debug stage tags on.
+#
+#   install-desktop-boot --desktop-boot DIR [--ref REF]
+#                        [--vigil DIR [--vigil-ref REF] | --vigil-pkg FILE]
+#
+#   --desktop-boot DIR   a desktop-boot checkout on this host. With --ref REF the
+#                        tree of that commit/branch is installed (git archive; the
+#                        checkout is not touched), otherwise its working tree.
+#   --vigil DIR          a vigil checkout. It is built in the guest as an Arch
+#                        package from DIR's packaging/PKGBUILD (source swapped for
+#                        the tree, no tests) and installed with pacman -U. The guest
+#                        keeps the cargo target dir, so a rebuild is incremental.
+#                        --vigil-ref REF builds that commit instead of the working tree.
+#   --vigil-pkg FILE     install a vigil .pkg.tar.zst built elsewhere instead.
+#
+# The guest must be up (`vm up`, wait ssh). desktop-boot's install.sh runs as the
+# guest user with DEBUG_STAGE_TAGS from profile.env (1 by default: GRUB's and
+# Plymouth's images get the tag baked in; the greeter, the session and the login
+# splash get it as an environment variable). Nothing here touches the host system.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=profile.env
+. "$HERE/profile.env"
+VM="$HERE/vm"
+
+DB="" DB_REF="" VIGIL="" VIGIL_REF="" VIGIL_PKG=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --desktop-boot) DB="$2"; shift 2 ;;
+        --ref) DB_REF="$2"; shift 2 ;;
+        --vigil) VIGIL="$2"; shift 2 ;;
+        --vigil-ref) VIGIL_REF="$2"; shift 2 ;;
+        --vigil-pkg) VIGIL_PKG="$2"; shift 2 ;;
+        -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
+        *) echo "install-desktop-boot: unknown argument $1" >&2; exit 2 ;;
+    esac
+done
+[ -n "$DB$VIGIL$VIGIL_PKG" ] || { echo "install-desktop-boot: nothing to install (see --help)" >&2; exit 2; }
+[ -z "$VIGIL" ] || [ -z "$VIGIL_PKG" ] || { echo "install-desktop-boot: --vigil and --vigil-pkg are exclusive" >&2; exit 2; }
+"$VM" ssh true >/dev/null 2>&1 || { echo "install-desktop-boot: the guest is not reachable (vm up; vm wait ssh)" >&2; exit 1; }
+
+# tree_tar DIR REF PREFIX: a tar stream of the tree (REF's commit, or the working tree
+# without .git, build output and untracked-but-ignored files).
+tree_tar() {
+    local dir="$1" ref="$2" prefix="$3"
+    if [ -n "$ref" ]; then git -C "$dir" archive --format=tar --prefix="$prefix/" "$ref"
+    else (cd "$dir" && git ls-files -z --cached --others --exclude-standard | tar --null -T - --transform "s|^|$prefix/|" -cf -)
+    fi
+}
+
+if [ -n "$DB" ]; then
+    echo "== desktop-boot${DB_REF:+ @ $DB_REF}"
+    tree_tar "$DB" "$DB_REF" desktop-boot | "$VM" ssh 'rm -rf ~/desktop-boot && tar -xf - -C ~'
+    # Guest-side settings only: the grub paths and the kernel/panel options of this profile.
+    "$VM" ssh 'cp /usr/local/share/hypr-qa/desktop-boot-config.env ~/desktop-boot/config.env'
+    "$VM" ssh "cd ~/desktop-boot && DEBUG_STAGE_TAGS=$DEBUG_STAGE_TAGS ./install.sh" 2>&1 | sed 's/^/   /'
+fi
+
+if [ -n "$VIGIL" ]; then
+    echo "== vigil${VIGIL_REF:+ @ $VIGIL_REF} (built in the guest)"
+    ver=$(sed -n 's/^pkgver=//p' "$VIGIL/packaging/PKGBUILD")
+    [ -n "$ver" ] || { echo "install-desktop-boot: no pkgver in $VIGIL/packaging/PKGBUILD" >&2; exit 1; }
+    "$VM" ssh 'rm -rf ~/vigil-build && mkdir -p ~/vigil-build ~/.cache/vigil-target'
+    tree_tar "$VIGIL" "$VIGIL_REF" "vigil-$ver" | "$VM" ssh "cat >~/vigil-build/vigil-$ver.tar"
+    "$VM" ssh 'cat >~/vigil-build/PKGBUILD' <"$VIGIL/packaging/PKGBUILD"
+    # The packaged PKGBUILD downloads the release tarball and runs the tests. Use the
+    # tree instead, skip the tests, and keep cargo's target dir outside makepkg's srcdir
+    # (an incremental rebuild). Everything else, package() and vigil.install included,
+    # is the PKGBUILD's own.
+    "$VM" ssh 'bash -se' <<GUEST 2>&1 | sed 's/^/   /'
+set -euo pipefail
+cd ~/vigil-build
+tar -xf vigil-$ver.tar --strip-components=2 vigil-$ver/packaging/vigil.install
+sed -i -E 's|^source=.*|source=("vigil-\$pkgver.tar")|; s|^sha256sums=.*|sha256sums=(SKIP)|; s|export CARGO_TARGET_DIR=target|export CARGO_TARGET_DIR="\$HOME/.cache/vigil-target"|' PKGBUILD
+grep -E '^(source|sha256sums)=|CARGO_TARGET_DIR' PKGBUILD
+nice -n 19 makepkg --nocheck --noconfirm -f 2>&1 | tail -n 25
+sudo pacman -U --noconfirm vigil-*.pkg.tar.zst
+GUEST
+elif [ -n "$VIGIL_PKG" ]; then
+    echo "== vigil (package $VIGIL_PKG)"
+    "$VM" ssh 'cat >/tmp/vigil.pkg.tar.zst' <"$VIGIL_PKG"
+    "$VM" ssh 'sudo pacman -U --noconfirm /tmp/vigil.pkg.tar.zst && rm /tmp/vigil.pkg.tar.zst' 2>&1 | sed 's/^/   /'
+fi
+
+echo "== installed"
+"$VM" ssh 'pacman -Q vigil 2>/dev/null || echo "vigil: not installed"; ls /usr/local/bin/desktop-boot-* /usr/share/desktop-boot/scene.json 2>&1 | head'

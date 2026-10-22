@@ -1,0 +1,14 @@
+# hypr-qa desktop-boot: /etc/greetd/vigil.toml for the test guest.
+[sessions]
+# Only the desktop-boot session below (the stock entries are not offered).
+dirs = ["/usr/local/share/wayland-sessions"]
+default = "Hyprland (desktop-boot)"
+remember = false
+
+[greeter]
+# Kiosk: the greeter asks for the password only, so a run types "qa" + Enter.
+# Delete this line (or set it to "") to get the username stage as well.
+user = "qa"
+
+[users]
+show_list = false
