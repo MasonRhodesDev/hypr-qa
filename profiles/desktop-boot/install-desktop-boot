@@ -76,6 +76,7 @@ set -euo pipefail
 cd ~/vigil-build
 tar -xf vigil-$ver.tar --strip-components=2 vigil-$ver/packaging/vigil.install
 sed -i -E 's|^source=.*|source=("vigil-\$pkgver.tar")|; s|^sha256sums=.*|sha256sums=(SKIP)|; s|export CARGO_TARGET_DIR=target|export CARGO_TARGET_DIR="\$HOME/.cache/vigil-target"|' PKGBUILD
+sed -i '/cargo build/a\\  ln -sfn "\$CARGO_TARGET_DIR" target   # package() reads target/release' PKGBUILD
 grep -E '^(source|sha256sums)=|CARGO_TARGET_DIR' PKGBUILD
 CARGO_BUILD_JOBS=\${VIGIL_JOBS:-2} nice -n 19 makepkg --nocheck --noconfirm -f 2>&1 | tail -n 25
 sudo pacman -U --noconfirm vigil-*.pkg.tar.zst
