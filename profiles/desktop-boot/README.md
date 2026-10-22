@@ -67,18 +67,42 @@ firmware and GRUB draw on head 0 only, and that must be the ultrawide for GRUB's
 `profile.env` to change it; `vm layout` prints the compositor-space rectangles vmkit's
 pointer mapping needs, and `vm` passes them on every call.
 
-### Pinning a mode per output (what works)
+### Pinning a mode per output (what works, what does not)
 
-- `xres`/`yres` on the device apply to **every** output's EDID and default mode; there is
-  no per-output size (`outputs` only sets names). The profile sets them to head 0's mode.
-- Kernel `video=Virtual-N:WxH@60` creates the mode on that connector, with or without the
-  EDID listing it. Provisioning writes one per connector into `GRUB_CMDLINE_LINUX_DEFAULT`
-  (desktop-boot's installer de-duplicates options by key, so only the first `video=` would
-  survive if they were in its config).
-- The Hyprland `hl.monitor` rule then selects the same mode and sets position and transform.
-- `PANEL_ORIENTATION="Virtual-3:right_side_up"` goes through desktop-boot's own option.
-  Whether the virtio driver honours it is a property of the driver, see the findings below.
-- OVMF: see the findings below for what firmware and GRUB resolve to.
+- **Extra heads are off until something enables them.** QEMU's virtio-gpu reports output N > 0 as
+  disconnected (`/sys/class/drm/card1-Virtual-2/status`) until a display backend sets that console's
+  UI info, and headless QEMU has none. `xres`/`yres`/`edid` do not help.
+- **Working mechanism: one VNC server per head.** vmkit's `up --gpu-modes 3440x1440,1920x1080,3840x2160`
+  adds `-vnc unix:...,display=gpu0,head=N` for each extra head and sends each a VNC
+  `SetDesktopSize` (lib/vmkit/rfb.py). That enables the connector and makes the requested size its
+  EDID preferred mode, per head. It persists after the client disconnects, and `vmkit heads set N WxH`
+  does the same live (a hotplug the guest sees). Head 0's size is the device's `xres`/`yres`.
+- Without it, `xres`/`yres` give every output the same mode and `outputs` only names them.
+- Kernel `video=Virtual-N:WxH@60` (provision.sh puts one per connector in
+  `GRUB_CMDLINE_LINUX_DEFAULT`; desktop-boot's installer de-duplicates options by key, so only the
+  first `video=` would survive if they were in its config) and the Hyprland `hl.monitor` rule repeat
+  the mode. Both are redundant once the EDID is right, and harmless.
+- **Firmware and GRUB: head 0 only, and not at 3440x1440.** OVMF's GOP lists fixed modes (checked with
+  GRUB `insmod all_video; videoinfo`: 640x480 up to at least 1920x1080, no 3440x1440; EDID does not add
+  one). So `GRUB_MODE` is 1920x1080 here (`profile.env`); with 3440x1440 GRUB prints
+  `no suitable video mode found`. Heads 1 and 2 are not lit by firmware or GRUB (QEMU's
+  "Display output is not active." placeholder, which vmkit marks `inactive`), like the real machine.
+  They light when the kernel's DRM driver takes over (Plymouth).
+- Heads 1 and 2 count as "no scanout" in the recording until then, so an `inactive` frame there is
+  expected early in the boot, not an error.
+- **Not verified:** whether `video=Virtual-3:panel_orientation=right_side_up` has any effect on virtio-gpu
+  (the connector may not expose the property). The final desktop frame of head 2 is the physical
+  3840x2160 scanout with Hyprland's rotated content, so the portrait bar shows as a vertical strip.
+
+## Known state of the stages (2026-10-22)
+
+Recorded with desktop-boot `main` and vigil `main` (the stage branches do not all build yet):
+vigil's `greeter-scene-v2` working tree and HEAD fail to compile in this guest
+(`Splash.sweep_ms` and `fade_ms` missing), and desktop-boot `scene-v2` still has
+the Plymouth `build.py` and login-splash callers the brief lists as broken. With `main`, GRUB
+shows `error: no video mode activated` and `Press any key to continue...` at the Booting line for
+about 14 s in this VM, then the console log scrolls (no Plymouth splash in the frames), the greeter
+draws on all three heads, and the desktop (waybar) comes up on all three.
 
 ## Host side
 

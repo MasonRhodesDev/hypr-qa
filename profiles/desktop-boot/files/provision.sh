@@ -96,7 +96,7 @@ grub-mkconfig -o /boot/grub/grub.cfg
 # desktop-boot's config.env for the guest (the host hook copies it into the checkout).
 cat >"$SHARE/desktop-boot-config.env" <<CFG
 # Written by hypr-qa's desktop-boot profile.
-GRUB_MODE="${HEAD_MODES[0]}"
+GRUB_MODE="${GRUB_MODE}"
 GRUB_EFI_DIR="/efi"
 GRUB_BOOTLOADER_ID="GRUB"
 PANEL_ORIENTATION="${PANEL_ORIENTATION}"
