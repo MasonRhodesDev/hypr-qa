@@ -44,7 +44,7 @@ class Profile(unittest.TestCase):
         line = open(self.log).read().strip()
         layout, argv = line.split("|", 1)
         self.assertEqual(layout, "1920,0,3440,1440;0,0,1920,1080;5360,0,2160,3840")
-        for want in ("--gpu-heads 3", "--gpu-res 3440x1440", "--uefi", "--ssh-user qa"):
+        for want in ("--gpu-heads 3", "--gpu-modes 3440x1440,1920x1080,3840x2160", "--uefi", "--ssh-user qa"):
             self.assertIn(want, argv)
         self.assertTrue(argv.endswith("heads"))
 

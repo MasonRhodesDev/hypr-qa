@@ -35,7 +35,7 @@ vk() {
     VMKIT_LAYOUT="$(layout)" "$VMKIT" --overlay "$OVERLAY" --cidata "$SEED" --dir "$VMKIT_DIR" \
         --ssh-port "$SSH_PORT" --ssh-user "$QA_USER" --ssh-key "$SSH_KEY" \
         --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" \
-        --gpu-heads "$GPU_HEADS" --gpu-res "$GPU_RES" --uefi "$@"
+        --gpu-heads "$GPU_HEADS" --gpu-modes "$(IFS=,; echo "${HEAD_MODES[*]}")" --uefi "$@"
 }
 
 qmp_alive() { [ -S "$VMKIT_DIR/qmp.sock" ] && vk qmp '{"execute":"query-status"}' >/dev/null 2>&1; }
