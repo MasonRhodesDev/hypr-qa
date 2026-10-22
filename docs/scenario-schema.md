@@ -31,16 +31,16 @@ processed the request.
 
 ## Heads
 
-A profile can give the guest several outputs (`HEADS` in its `profile.env`; vmkit `--heads`). The
+A profile can give the guest several outputs (`HEADS` in its `profile.env`; vmkit `--gpu-heads`). The
 recorder captures **one** head per run, chosen by the scenario's top-level `head` (0-based, the
 guest's `Virtual-<head+1>`); every frame check reads that head's frames. Checks on two heads are two
 runs, or `vmkit = ["--head", "1", "shot", "NAME"]` steps for stills of another head (a `--head` on a
 vmkit action overrides the scenario's for that action). Coordinates are per head: origin top-left of
 that head's framebuffer, in physical pixels (so a head at scale 1.5 is 1.5x its logical size).
 Pointer actions (`vmkit move/click/tap/drag`) are different: the guest maps its one absolute
-pointer over the whole output layout, so with several heads the profile sets `POINTER_AREA` (vmkit
-`--pointer-area`), and pointer coordinates are then positions in the layout in the compositor's
-logical pixels (two 1024-wide heads side by side: x runs 0-2047, head 2 starts at 1024).
+pointer over the whole output layout, so with several heads the profile sets `LAYOUT` (vmkit
+`--layout`), and pointer coordinates are in the compositor's logical pixels of the selected head
+(a head at scale 1.5 is its physical size / 1.5).
 
 ## Coordinates
 

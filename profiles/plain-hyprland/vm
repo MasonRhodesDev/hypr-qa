@@ -18,11 +18,13 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "${HQA_PROFILE_ENV:-$HERE/profile.env}"
 
 # Head flags are passed only for a multi-head guest, so a single-head profile still
-# runs against a vmkit that predates them.
+# runs against a vmkit that predates them. GPU_MODES is one WxH per head, comma
+# separated; vmkit enables and sizes every head at `up`.
 HEADS_ARGS=()
 if [ "${HEADS:-1}" -gt 1 ]; then
-    HEADS_ARGS=(--heads "$HEADS")
-    for o in ${GPU_OPTS:-}; do HEADS_ARGS+=(--gpu-opt "$o"); done
+    HEADS_ARGS=(--gpu-heads "$HEADS")
+    [ -z "${GPU_MODES:-}" ] || HEADS_ARGS+=(--gpu-modes "$GPU_MODES")
+    [ -z "${LAYOUT:-}" ] || HEADS_ARGS+=(--layout "$LAYOUT")
 fi
 
 vk() {
@@ -30,7 +32,7 @@ vk() {
         --ssh-port "$SSH_PORT" --ssh-user "$QA_USER" --ssh-key "$SSH_KEY" \
         --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" \
         ${HEADS_ARGS[@]+"${HEADS_ARGS[@]}"} \
-        ${POINTER_AREA:+--pointer-area "$POINTER_AREA"} "$@"
+        "$@"
 }
 
 # vmkit's snapshot/restore send savevm/loadvm as QMP commands, which modern
@@ -71,18 +73,8 @@ cmd_up() {
     cat "$VMKIT_DIR/up.log"
     local i
     # Up to 60 s: on a busy host qemu can take well over 10 s to open its QMP socket.
-    for i in $(seq 1 300); do qmp_alive && { cmd_head_sizes; return; }; sleep 0.2; done
+    for i in $(seq 1 300); do qmp_alive && return 0; sleep 0.2; done
     echo "vm: qemu did not come up; see $VMKIT_DIR/up.log" >&2; return 1
-}
-
-# Heads past the first stay disconnected in the guest until sized; HEAD_SIZES is
-# the WxH of heads 1.., in order. Done after every up, before the guest looks.
-cmd_head_sizes() {
-    local h=1 size
-    for size in ${HEAD_SIZES:-}; do
-        vk head-size "$h" "$size" 2.0 || { echo "vm: could not size head $h to $size" >&2; return 1; }
-        h=$((h + 1))
-    done
 }
 
 cmd_snapshot() {

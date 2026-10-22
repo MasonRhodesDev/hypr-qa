@@ -17,17 +17,16 @@ more RAM than it has.
 ## How a second head works
 
 QEMU's virtio-gpu reports only head 0 as connected until a display frontend sets a size for the others.
-With no GUI attached the profile does it through the head's own VNC socket: `vm up` calls
-`vmkit head-size 1 1024x768` (`HEAD_SIZES` in `profile.env`) right after boot, and the guest then
-sees `Virtual-2` as hot-plugged. Both heads' preferred mode is `xres x yres` from `GPU_OPTS`; head 1
-is resized to its own.
+vmkit does that at `up` through each extra head's own VNC socket (`--gpu-modes`, `GPU_MODES` in
+`profile.env`: one WxH per head), so the guest sees `Virtual-2` as hot-plugged right after boot.
 
 ## Heads in scenarios
 
 - `head = N` at the top of a scenario picks the head the recording and frame checks read (default 0).
   One head per run: two heads are two runs, or `vmkit = ["--head", "1", "shot", NAME]` for a still.
-- Pointer actions (`vmkit move/click/tap`) take coordinates in the layout, 0-2047 by 0-767 here
-  (`POINTER_AREA`), because the guest maps its one pointer over both heads.
+- Pointer actions (`vmkit move/click/tap`) take coordinates in the logical pixels of the selected head
+  (`--head N`, default the scenario's), placed by `LAYOUT` in `profile.env`, because the guest maps its
+  one pointer over both heads.
 - `[guest] hyprland` options apply as for any profile; `xwayland = { force_zero_scaling = true }`
   restarts XWayland, so give it a few seconds before starting an X11 client.
 
