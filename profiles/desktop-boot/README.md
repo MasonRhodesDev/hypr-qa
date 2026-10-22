@@ -101,7 +101,7 @@ vigil's `greeter-scene-v2` working tree and HEAD fail to compile in this guest
 (`Splash.sweep_ms` and `fade_ms` missing), and desktop-boot `scene-v2` still has
 the Plymouth `build.py` and login-splash callers the brief lists as broken. With `main`, GRUB
 shows `error: no video mode activated` and `Press any key to continue...` at the Booting line for
-about 14 s in this VM, then the console log scrolls (no Plymouth splash in the frames), the greeter
+about 14 s in this VM, then the console log scrolls (no Plymouth splash in the frames I sampled, not investigated), the greeter
 draws on all three heads, and the desktop (waybar) comes up on all three.
 
 ## Host side
