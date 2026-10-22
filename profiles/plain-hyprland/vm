@@ -17,11 +17,19 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=profile.env
 . "${HQA_PROFILE_ENV:-$HERE/profile.env}"
 
+# Head flags are passed only for a multi-head guest, so a single-head profile still
+# runs against a vmkit that predates them.
+HEADS_ARGS=()
+if [ "${HEADS:-1}" -gt 1 ]; then
+    HEADS_ARGS=(--heads "$HEADS")
+    for o in ${GPU_OPTS:-}; do HEADS_ARGS+=(--gpu-opt "$o"); done
+fi
+
 vk() {
     "$VMKIT" --overlay "$OVERLAY" --cidata "$SEED" --dir "$VMKIT_DIR" \
         --ssh-port "$SSH_PORT" --ssh-user "$QA_USER" --ssh-key "$SSH_KEY" \
         --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" \
-        --heads "$HEADS" ${GPU_OPTS:+$(printf -- '--gpu-opt %s ' $GPU_OPTS)} \
+        ${HEADS_ARGS[@]+"${HEADS_ARGS[@]}"} \
         ${POINTER_AREA:+--pointer-area "$POINTER_AREA"} "$@"
 }
 
@@ -58,7 +66,7 @@ cmd_up() {
     setsid -w nice -n 19 ionice -c "$HQA_IONICE_CLASS" "$VMKIT" --ionice "$HQA_IONICE_CLASS" --overlay "$OVERLAY" --cidata "$SEED" --dir "$VMKIT_DIR" \
         --ssh-port "$SSH_PORT" --ssh-user "$QA_USER" --ssh-key "$SSH_KEY" \
         --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" \
-        --heads "$HEADS" ${GPU_OPTS:+$(printf -- '--gpu-opt %s ' $GPU_OPTS)} up \
+        ${HEADS_ARGS[@]+"${HEADS_ARGS[@]}"} up \
         >"$VMKIT_DIR/up.log" 2>&1 </dev/null
     cat "$VMKIT_DIR/up.log"
     local i

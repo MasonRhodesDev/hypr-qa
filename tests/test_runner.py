@@ -90,10 +90,11 @@ class HeadEnv(unittest.TestCase):
         self.assertEqual(vm.env()["VMKIT_HEAD"], "1")
         self.assertEqual(vm.env(step="s")["VMKIT_STEP"], "s")
 
-    def test_head_zero_leaves_the_environment_alone(self):
+    def test_scenario_head_wins_over_an_inherited_environment_variable(self):
         d = os.path.join(os.path.dirname(__file__), "fake_profiles")
-        vm = runner.VM(os.listdir(d)[0], profiles_dir=d)
-        self.assertNotIn("VMKIT_HEAD", {k: v for k, v in vm.env().items() if k not in os.environ})
+        with mock.patch.dict(os.environ, {"VMKIT_HEAD": "1"}):
+            self.assertEqual(runner.VM(os.listdir(d)[0], profiles_dir=d).env()["VMKIT_HEAD"], "0")
+            self.assertEqual(runner.VM(os.listdir(d)[0], profiles_dir=d, head=2).env()["VMKIT_HEAD"], "2")
 
 
 class Kills(unittest.TestCase):

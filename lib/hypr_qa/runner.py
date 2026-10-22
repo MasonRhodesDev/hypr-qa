@@ -108,8 +108,7 @@ class VM:
         env = {k: v for k, v in os.environ.items() if k != "VMKIT_STEP"}
         if step:
             env["VMKIT_STEP"] = step
-        if self.head:
-            env["VMKIT_HEAD"] = str(self.head)
+        env["VMKIT_HEAD"] = str(self.head)      # the scenario's head wins over an inherited VMKIT_HEAD
         return env
 
     def argv(self, *args):

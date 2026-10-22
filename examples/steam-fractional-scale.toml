@@ -73,7 +73,7 @@ id = "scaled-shot-head1"
 do = { vmkit = ["shot", "steam-scaled-head1"] }
 [[step]]
 id = "scaled-env"                       # the variable reached the webhelper (it is not dropped by the runtime container)
-do = { session = "for p in $(pgrep -x steamwebhelper); do tr '\\0' '\\n' </proc/$p/environ | grep -qx SDL_VIDEO_X11_SCALING_FACTOR=1.5 || exit 1; done" }
+do = { session = "pgrep -x steamwebhelper >/dev/null || exit 1; for p in $(pgrep -x steamwebhelper); do tr '\\0' '\\n' </proc/$p/environ | grep -qx SDL_VIDEO_X11_SCALING_FACTOR=1.5 || exit 1; done" }
 [[step]]
 id = "stop-2"
 do = { session = "pkill -x steam; pkill -x steamwebhelper; sleep 3; true" }
