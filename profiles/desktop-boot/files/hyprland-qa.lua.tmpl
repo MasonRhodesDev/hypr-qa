@@ -1,0 +1,32 @@
+
+----------------------------------------------------------------------
+---- hypr-qa overrides (desktop-boot profile) ------------------------
+-- Everything above is the stock /usr/share/hypr/hyprland.lua of the
+-- installed Hyprland (terminal switched to foot). Below: only what QA
+-- needs. The monitor rules come from profile.env (filled in by the provisioner).
+----------------------------------------------------------------------
+hl.env("XCURSOR_THEME", "Adwaita")
+hl.env("XCURSOR_SIZE", "24")
+
+@MONITORS@
+
+hl.config({
+    ecosystem = { no_update_news = true, no_donation_nag = true },
+    -- A flat first frame in the splash colour until something is drawn, as
+    -- desktop-boot's README asks of the compositor's config.
+    misc = {
+        disable_hyprland_logo    = true,
+        disable_splash_rendering = true,
+        force_default_wallpaper  = 0,
+        background_color         = "rgba(0b0d10ff)",
+    },
+    animations = { enabled = false },
+})
+
+-- The login splash: starts first, covers every monitor, leaves once the bar is
+-- up (DESKTOP_BOOT_WAIT_LAYERS, see desktop-boot's README). A bar so there is a
+-- layer to wait for; there is no wallpaper daemon in this guest.
+hl.on("hyprland.start", function ()
+    hl.exec_cmd("env DEBUG_STAGE_TAGS=@DEBUG_STAGE_TAGS@ DESKTOP_BOOT_WAIT_LAYERS=waybar /usr/local/bin/desktop-boot-login-splash")
+    hl.exec_cmd("waybar")
+end)

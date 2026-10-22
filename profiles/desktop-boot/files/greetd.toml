@@ -1,0 +1,10 @@
+# hypr-qa desktop-boot: the real chain. greetd starts the vigil greeter on VT1;
+# a successful login starts the session chosen in vigil.toml. DEBUG_STAGE_TAGS
+# is set here so the greeter draws its stage tag (the greeter's environment is
+# greetd's, not the shell's).
+[terminal]
+vt = 1
+
+[default_session]
+command = "/usr/bin/env DEBUG_STAGE_TAGS=@DEBUG_STAGE_TAGS@ /usr/bin/vigil"
+user = "greeter"

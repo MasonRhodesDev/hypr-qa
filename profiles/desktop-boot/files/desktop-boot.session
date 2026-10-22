@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Hyprland (desktop-boot)
+Comment=Hyprland through uwsm, wrapped by desktop-boot-session
+Exec=/usr/bin/env DEBUG_STAGE_TAGS=@DEBUG_STAGE_TAGS@ /usr/local/bin/desktop-boot-session uwsm start -e -D Hyprland hyprland.desktop
+TryExec=uwsm
+DesktopNames=Hyprland
+Type=Application
