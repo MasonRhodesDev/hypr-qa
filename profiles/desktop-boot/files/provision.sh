@@ -31,6 +31,13 @@ echo "== installed: $(pacman -Q hyprland uwsm greetd plymouth grub mesa | tr '\n
 QA_USER=qa
 home=$(getent passwd "$QA_USER" | cut -d: -f6)
 
+# ---- swap: the vigil build (slint) needs more than 4 GB with parallel rustc ----------
+if [ "$(swapon --noheadings --bytes --show=SIZE | awk '{s+=$1} END {print s+0}')" -lt 4000000000 ]; then   # the image ships 512 MB
+    btrfs filesystem mkswapfile --size 6g /swapfile >/dev/null
+    swapon /swapfile
+    grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap defaults 0 0' >>/etc/fstab
+fi
+
 # ---- Hyprland config: stock example (terminal foot) + QA overrides + the monitors
 install -d -o "$QA_USER" -g "$QA_USER" "$home/.config" "$home/.config/hypr" "$home/.config/foot"
 cfg="$home/.config/hypr/hyprland.lua"

@@ -12,6 +12,7 @@
 #                        package from DIR's packaging/PKGBUILD (source swapped for
 #                        the tree, no tests) and installed with pacman -U. The guest
 #                        keeps the cargo target dir, so a rebuild is incremental.
+#                        2 cargo jobs (the guest has 4 GB); VIGIL_JOBS=N overrides.
 #                        --vigil-ref REF builds that commit instead of the working tree.
 #   --vigil-pkg FILE     install a vigil .pkg.tar.zst built elsewhere instead.
 #
@@ -76,7 +77,7 @@ cd ~/vigil-build
 tar -xf vigil-$ver.tar --strip-components=2 vigil-$ver/packaging/vigil.install
 sed -i -E 's|^source=.*|source=("vigil-\$pkgver.tar")|; s|^sha256sums=.*|sha256sums=(SKIP)|; s|export CARGO_TARGET_DIR=target|export CARGO_TARGET_DIR="\$HOME/.cache/vigil-target"|' PKGBUILD
 grep -E '^(source|sha256sums)=|CARGO_TARGET_DIR' PKGBUILD
-nice -n 19 makepkg --nocheck --noconfirm -f 2>&1 | tail -n 25
+CARGO_BUILD_JOBS=\${VIGIL_JOBS:-2} nice -n 19 makepkg --nocheck --noconfirm -f 2>&1 | tail -n 25
 sudo pacman -U --noconfirm vigil-*.pkg.tar.zst
 GUEST
 elif [ -n "$VIGIL_PKG" ]; then
