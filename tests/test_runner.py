@@ -83,6 +83,20 @@ class CliUnexpected(unittest.TestCase):
             self.assertEqual(cli.main(["check", "/nonexistent"]), 2)
 
 
+class HeadEnv(unittest.TestCase):
+    def test_head_reaches_vmkit_through_the_environment(self):
+        d = os.path.join(os.path.dirname(__file__), "fake_profiles")
+        vm = runner.VM(os.listdir(d)[0], profiles_dir=d, head=1)
+        self.assertEqual(vm.env()["VMKIT_HEAD"], "1")
+        self.assertEqual(vm.env(step="s")["VMKIT_STEP"], "s")
+
+    def test_scenario_head_wins_over_an_inherited_environment_variable(self):
+        d = os.path.join(os.path.dirname(__file__), "fake_profiles")
+        with mock.patch.dict(os.environ, {"VMKIT_HEAD": "1"}):
+            self.assertEqual(runner.VM(os.listdir(d)[0], profiles_dir=d).env()["VMKIT_HEAD"], "0")
+            self.assertEqual(runner.VM(os.listdir(d)[0], profiles_dir=d, head=2).env()["VMKIT_HEAD"], "2")
+
+
 class Kills(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="hqa-test-")

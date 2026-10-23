@@ -18,7 +18,10 @@ echo "== $(date -u +%FT%TZ) provisioning"
 # it first, then do a full upgrade together with the install (Arch does not
 # support partial upgrades).
 pacman -Sy --noconfirm archlinux-keyring
-pacman -Syu --noconfirm --needed \
+bash "$SHARE/pre-install.sh"
+extra=$(grep -v '^[[:space:]]*#' "$SHARE/packages.txt" | tr '\n' ' ')
+# shellcheck disable=SC2086
+pacman -Syu --noconfirm --needed $extra \
     hyprland mesa \
     foot \
     ttf-dejavu \
@@ -37,7 +40,7 @@ cfg="$home/.config/hypr/hyprland.lua"
 sed -E 's/^(local terminal[[:space:]]*=[[:space:]]*)"kitty"/\1"foot"/' /usr/share/hypr/hyprland.lua >"$cfg"
 grep -qE '^local terminal[[:space:]]*=[[:space:]]*"foot"' "$cfg" \
     || echo "WARN: stock config has no kitty terminal line; terminal not switched to foot"
-cat "$SHARE/hyprland-qa.lua" >>"$cfg"
+cat "$SHARE/hyprland-qa.lua" "$SHARE/hyprland-extra.lua" >>"$cfg"
 chown "$QA_USER:$QA_USER" "$cfg"
 
 # foot: a font size OCR reads reliably.
@@ -56,6 +59,8 @@ systemctl enable greetd.service
 # The guest clock comes from the host RTC (and `vm restore` resyncs it), so
 # don't wait for NTP.
 systemctl mask systemd-time-wait-sync.service
+
+bash "$SHARE/post-install.sh"
 
 echo "== $(date -u +%FT%TZ) provisioning done"
 touch "$STATE/provisioned"

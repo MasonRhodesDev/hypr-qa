@@ -1,0 +1,11 @@
+# Steam and its 32-bit software-GL stack (the guest has no GPU).
+steam
+lib32-mesa
+lib32-vulkan-swrast
+vulkan-swrast
+# XWayland and X11 inspection tools the scenarios run in the session.
+xorg-xwayland
+xorg-xwininfo
+xorg-xprop
+xdotool
+gamescope

@@ -20,8 +20,8 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=profile.env
-. "$HERE/profile.env"
-VM="$HERE/vm"
+. "${HQA_PROFILE_ENV:-$HERE/profile.env}"
+VM="${HQA_VM:-$HERE/vm}"
 
 T0=$(date +%s)
 declare -a TIMINGS=()
@@ -86,6 +86,8 @@ phase "seed iso"
 seed_dir="$PROFILE_DIR/seed"
 rm -rf "$seed_dir"; mkdir -p "$seed_dir"
 b64() { base64 -w0 "$HERE/files/$1"; }
+# A derived profile's extras (see profile.env); an absent one is an empty script/list.
+xb64() { if [ -n "$HQA_EXTRA_DIR" ] && [ -f "$HQA_EXTRA_DIR/$1" ]; then base64 -w0 "$HQA_EXTRA_DIR/$1"; else printf '# none\n' | base64 -w0; fi; }
 python3 - "$HERE/user-data.tmpl" "$seed_dir/user-data" \
     "@SSH_PUBKEY@=$(tr -d '\n' <"$SSH_PUB")" \
     "@PASSWD_HASH@=$(openssl passwd -6 qa)" \
@@ -96,7 +98,11 @@ python3 - "$HERE/user-data.tmpl" "$seed_dir/user-data" \
     "@FOOT_INI_B64@=$(b64 foot.ini)" \
     "@QA_CURSOR_PLANE_B64@=$(b64 qa-cursor-plane)" \
     "@QA_SETCURSOR_B64@=$(b64 qa-setcursor)" \
-    "@USB_RULE_B64@=$(b64 99-hypr-qa-usb-no-autosuspend.rules)" <<'PY'
+    "@USB_RULE_B64@=$(b64 99-hypr-qa-usb-no-autosuspend.rules)" \
+    "@PRE_INSTALL_B64@=$(xb64 pre-install.sh)" \
+    "@PACKAGES_B64@=$(xb64 packages.txt)" \
+    "@POST_INSTALL_B64@=$(xb64 post-install.sh)" \
+    "@HYPRLAND_EXTRA_B64@=$(xb64 hyprland-extra.lua)" <<'PY'
 import sys
 src, dst, *subs = sys.argv[1:]
 text = open(src).read()
@@ -152,12 +158,18 @@ phase "session checks"
 mon=$("$VM" session hyprctl -j monitors)
 echo "$mon" | python3 -c '
 import json, sys
-m = json.load(sys.stdin)
-assert len(m) == 1, "expected 1 monitor, got %d" % len(m)
-m = m[0]
-print("   monitor %s %dx%d@%.0f scale %s" % (m["name"], m["width"], m["height"], m["refreshRate"], m["scale"]))
-assert (m["width"], m["height"]) == (1280, 800), "resolution is not 1280x800"
-' || die "monitor check failed"
+want = {}
+for item in sys.argv[1].split():
+    name, size, scale = item.split(":")
+    want[name] = (tuple(int(v) for v in size.split("x")), float(scale))
+m = {x["name"]: x for x in json.load(sys.stdin)}
+assert sorted(m) == sorted(want), "monitors are %s, want %s" % (sorted(m), sorted(want))
+for name, x in sorted(m.items()):
+    print("   monitor %s %dx%d@%.0f scale %s" % (name, x["width"], x["height"], x["refreshRate"], x["scale"]))
+    size, scale = want[name]
+    assert (x["width"], x["height"]) == size, "%s resolution is not %dx%d" % ((name,) + size)
+    assert abs(x["scale"] - scale) < 0.01, "%s scale is %s, want %s" % (name, x["scale"], scale)
+' "$EXPECT_MONITORS" || die "monitor check failed"
 errs=$("$VM" session hyprctl configerrors 2>&1 | grep -v '^[[:space:]]*$' || true)
 case "$errs" in
     ""|"no errors"*|"No errors"*) echo "   config errors: none" ;;
@@ -183,6 +195,7 @@ usb=$("$VM" ssh 'for d in /sys/bus/usb/devices/*; do [ -f "$d/product" ] && echo
 printf '%s\n' "$usb" | sed 's/^/   usb /'
 printf '%s\n' "$usb" | grep -q 'Keyboard: active$' || die "USB keyboard is not runtime-active after 6 s idle"
 ! printf '%s\n' "$usb" | grep -q ': suspended$' || die "a USB device runtime-suspended despite the udev rule"
+if [ "$POINTER_CHECK" = 1 ]; then
 # The pointer must be the session theme's left_ptr, not Hyprland's built-in
 # fallback (drawn when no cursor theme loads): the env clients inherit, then a
 # screendump at a known position against the theme's own image.
@@ -198,7 +211,14 @@ echo "   session XCURSOR_THEME XCURSOR_SIZE: $xenv"
 "$VM" shot pointer-check >/dev/null || die "screendump failed"
 python3 "$HERE/check-pointer" "$VMKIT_DIR/pointer-check.png" 640 400 "$VMKIT_DIR/left_ptr.xcursor" "$CURSOR_SIZE" \
     | sed 's/^/   /' || die "the pointer is not $CURSOR_THEME's left_ptr (see $VMKIT_DIR/pointer-check.png)"
+fi
 "$VM" wait screen 60 3 >/dev/null || echo "   (screen did not settle within 60 s; snapshotting anyway)"
+
+if [ -n "$HQA_EXTRA_DIR" ] && [ -x "$HQA_EXTRA_DIR/post-session.sh" ]; then
+    phase "post-session hook"
+    "$HQA_EXTRA_DIR/post-session.sh" "$VM" || die "post-session.sh failed"
+    "$VM" wait screen 60 3 >/dev/null || echo "   (screen did not settle within 60 s; snapshotting anyway)"
+fi
 
 phase "snapshot"
 "$VM" snapshot "$SNAPSHOT" || die "snapshot failed"

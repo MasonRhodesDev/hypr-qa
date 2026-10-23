@@ -15,12 +15,24 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=profile.env
-. "$HERE/profile.env"
+. "${HQA_PROFILE_ENV:-$HERE/profile.env}"
+
+# Head flags are passed only for a multi-head guest, so a single-head profile still
+# runs against a vmkit that predates them. GPU_MODES is one WxH per head, comma
+# separated; vmkit enables and sizes every head at `up`.
+HEADS_ARGS=()
+if [ "${HEADS:-1}" -gt 1 ]; then
+    HEADS_ARGS=(--gpu-heads "$HEADS")
+    [ -z "${GPU_MODES:-}" ] || HEADS_ARGS+=(--gpu-modes "$GPU_MODES")
+    [ -z "${LAYOUT:-}" ] || HEADS_ARGS+=(--layout "$LAYOUT")
+fi
 
 vk() {
     "$VMKIT" --overlay "$OVERLAY" --cidata "$SEED" --dir "$VMKIT_DIR" \
         --ssh-port "$SSH_PORT" --ssh-user "$QA_USER" --ssh-key "$SSH_KEY" \
-        --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" "$@"
+        --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" \
+        ${HEADS_ARGS[@]+"${HEADS_ARGS[@]}"} \
+        "$@"
 }
 
 # vmkit's snapshot/restore send savevm/loadvm as QMP commands, which modern
@@ -55,7 +67,8 @@ cmd_up() {
     # setsid detaches qemu from this shell/ssh session; the ionice class is inherited.
     setsid -w nice -n 19 ionice -c "$HQA_IONICE_CLASS" "$VMKIT" --ionice "$HQA_IONICE_CLASS" --overlay "$OVERLAY" --cidata "$SEED" --dir "$VMKIT_DIR" \
         --ssh-port "$SSH_PORT" --ssh-user "$QA_USER" --ssh-key "$SSH_KEY" \
-        --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" up \
+        --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" \
+        ${HEADS_ARGS[@]+"${HEADS_ARGS[@]}"} up \
         >"$VMKIT_DIR/up.log" 2>&1 </dev/null
     cat "$VMKIT_DIR/up.log"
     local i

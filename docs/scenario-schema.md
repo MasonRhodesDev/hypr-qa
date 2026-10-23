@@ -29,6 +29,19 @@ Expectations are offset from `t_send` by default, or from `t_ack` with `anchor =
 For hyprhands actions `t_ack` is usually the better anchor: it is after the guest has
 processed the request.
 
+## Heads
+
+A profile can give the guest several outputs (`HEADS` in its `profile.env`; vmkit `--gpu-heads`). The
+recorder captures **one** head per run, chosen by the scenario's top-level `head` (0-based, the
+guest's `Virtual-<head+1>`); every frame check reads that head's frames. Checks on two heads are two
+runs, or `vmkit = ["--head", "1", "shot", "NAME"]` steps for stills of another head (a `--head` on a
+vmkit action overrides the scenario's for that action). Coordinates are per head: origin top-left of
+that head's framebuffer, in physical pixels (so a head at scale 1.5 is 1.5x its logical size).
+Pointer actions (`vmkit move/click/tap/drag`) are different: the guest maps its one absolute
+pointer over the whole output layout, so with several heads the profile sets `LAYOUT` (vmkit
+`--layout`), and pointer coordinates are in the compositor's logical pixels of the selected head
+(a head at scale 1.5 is its physical size / 1.5).
+
 ## Coordinates
 
 Guest framebuffer pixels, origin top-left, the same as `vmkit shot`. A region is
@@ -41,6 +54,7 @@ bottom 60 px of the screen is `[0, -60, 0, 60]`. A `w` or `h` of `0` means "to t
 name    = "hyprhands-overlay"     # required; used for the run directory
 profile = "plain-hyprland"        # guest profile (profiles/<name>/)
 snapshot = "session-ready"        # restore this snapshot before the run (default: profile's)
+head     = 0                      # which output the recording, `changed`/`pixel`/`ocr`/`template` checks and `vmkit shot` read (default 0)
 
 [guest]
 hyprland = { cursor = { no_hardware_cursors = true } }  # passed to hl.config() via `hyprctl eval` before step 1
@@ -154,6 +168,8 @@ Measured on mason-desktop (spike, 2026-09-30; 3 reps per cell, guest under softw
 Exit code: `0` all passed, `1` a check failed, `2` an error (boot, action, or unresolvable window).
 
 ## Changelog
+
+- v0.4: top-level `head`: the output the recording and checks read, for guests with several heads.
 
 - v0 (2026-09-30): first draft.
 - v0.1 (2026-09-30): `[guest] hyprland` is a nested table given to `hl.config()` through

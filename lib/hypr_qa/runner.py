@@ -96,7 +96,8 @@ class Terminated(BaseException):
 class VM:
     """The profile's `vm` wrapper. Every call is logged to runner.log."""
 
-    def __init__(self, profile, log_path=None, profiles_dir=None):
+    def __init__(self, profile, log_path=None, profiles_dir=None, head=0):
+        self.head = head          # the head recording, shots and checks read (VMKIT_HEAD)
         self.dir = os.path.join(profiles_dir or os.path.join(REPO, "profiles"), profile)
         self.path = os.path.join(self.dir, "vm")
         if not os.access(self.path, os.X_OK):
@@ -107,6 +108,7 @@ class VM:
         env = {k: v for k, v in os.environ.items() if k != "VMKIT_STEP"}
         if step:
             env["VMKIT_STEP"] = step
+        env["VMKIT_HEAD"] = str(self.head)      # the scenario's head wins over an inherited VMKIT_HEAD
         return env
 
     def argv(self, *args):
@@ -188,7 +190,8 @@ class Runner:
         self.sdir = os.path.dirname(self.path)
         base = runs_dir or os.environ.get("HYPR_QA_RUNS") or os.path.join(REPO, "runs")
         self.run_dir = os.path.abspath(os.path.join(base, self.doc["name"], utc_stamp()))
-        self.vm = VM(self.doc["profile"], os.path.join(self.run_dir, "runner.log"), profiles_dir)
+        self.vm = VM(self.doc["profile"], os.path.join(self.run_dir, "runner.log"), profiles_dir,
+                      self.doc.get("head", 0))
         os.makedirs(self.run_dir)
         os.makedirs(os.path.join(self.run_dir, "frames"), exist_ok=True)
         self.down, self.serve_timeout = down, serve_timeout
@@ -633,7 +636,7 @@ def check_run(run_dir, scenario_path=None, profiles_dir=None):
     doc = S.load(path)
     if not os.path.exists(os.path.join(run_dir, "frames.jsonl")):
         raise RunError(f"{run_dir}: no recording (frames.jsonl) to check")
-    vm = VM(doc["profile"], os.path.join(run_dir, "runner.log"), profiles_dir)
+    vm = VM(doc["profile"], os.path.join(run_dir, "runner.log"), profiles_dir, doc.get("head", 0))
     vm.log(f"--- hypr-qa check {wall()} scenario={path}")
     sdir = os.path.dirname(path)
     return evaluate(run_dir, doc, sdir, vm)
