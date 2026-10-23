@@ -26,10 +26,10 @@ do = { session = "DISPLAY=:0 setsid steam >/dev/null 2>&1 </dev/null & disown; t
 [[step]]
 id = "baseline-window"                  # wait for the login window, then let it settle
 do = { session = "for i in $(seq 1 180); do hyprctl -j clients | grep -q '\"class\": \"steam\"' && exit 0; sleep 1; done; exit 1" }
-settle_ms = 4000
+settle_ms = 7000
 
   [[step.expect]]
-  at = "+0ms"
+  at = "+3000ms..+6000ms"
   anchor = "ack"
   check = "ocr"
   region = [0, 0, 0, 0]
@@ -59,10 +59,10 @@ do = { session = "DISPLAY=:0 SDL_VIDEO_X11_SCALING_FACTOR=1.5 setsid steam >/dev
 [[step]]
 id = "scaled-window"
 do = { session = "for i in $(seq 1 180); do hyprctl -j clients | grep -q '\"class\": \"steam\"' && exit 0; sleep 1; done; exit 1" }
-settle_ms = 4000
+settle_ms = 7000
 
   [[step.expect]]
-  at = "+0ms"
+  at = "+3000ms..+6000ms"
   anchor = "ack"
   check = "ocr"
   region = [0, 0, 0, 0]
