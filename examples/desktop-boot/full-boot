@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""full-boot: cold boot the desktop-boot guest, record every head from power-on to
+the desktop and through a reboot, and write a report with per-head contact sheets.
+
+    examples/desktop-boot/full-boot [--out DIR] [--fps N] [--sheet-every S] [--no-reboot]
+
+Prerequisites: the guest is built (profiles/desktop-boot/build), desktop-boot and
+vigil are installed in it (profiles/desktop-boot/install-desktop-boot), and it is
+powered off. Run it niced: `nice -n 19 ionice -c3 examples/desktop-boot/full-boot`.
+
+What it does (every step is stamped on the host's CLOCK_MONOTONIC, the clock of the
+recorder's frames):
+
+  power-on      `vm up` (OVMF starts, the VM has three virtio heads)
+  record        one recorder per head, started as soon as QEMU is up
+  greeter       the greeter process is running (polled over ssh once sshd is up)
+  login         the password is typed into the greeter (kiosk user "qa": no username stage)
+  desktop       Hyprland reports three monitors and waybar runs
+  reboot        `systemctl reboot` from the session: shutdown splash, firmware, GRUB,
+                Plymouth and the greeter again
+  greeter-2     the greeter of the second boot
+  stop          recording stops a few seconds after that
+
+Output, in --out (default runs/desktop-boot-full-boot/<UTC>):
+
+  rec/head0..2/        a vmkit run dir per head (frames/%06d.png, frames.jsonl on the
+                       shared host clock, video.mkv, summary.json); rec/heads.json
+  marks.json           the steps above with their host-clock times
+  report.html          rows = moments in time, columns = heads, so one row is the
+                       same instant on every screen; marks are labelled
+  sheets/head<N>.png   one contact sheet per head
+  results.json         loose checks: every head recorded, the greeter and the desktop
+                       were reached, the reboot came back to the greeter
+
+Checks are deliberately loose while the boot stages are still changing; the recording
+is the deliverable. Exit 0 when all steps completed, 1 when a step timed out, 2 on
+a usage or setup error.
+"""
+import argparse
+import html
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PROFILE = os.path.join(HERE, "..", "..", "profiles", "desktop-boot")
+VM = os.path.join(PROFILE, "vm")
+now = time.monotonic_ns
+
+
+def vm(*args, check=False, timeout=None, capture=True):
+    p = subprocess.run([VM, *args], capture_output=capture, text=True, timeout=timeout)
+    if check and p.returncode:
+        sys.exit(f"full-boot: vm {' '.join(args)} failed: {p.stdout.strip()} {p.stderr.strip()}")
+    return p
+
+
+def guest_ok(cmd, timeout=15):
+    try:
+        return vm("ssh", cmd, timeout=timeout).returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+
+
+def wait_for(what, cond, timeout_s, every=2.0):
+    """Poll cond() until true; returns the host-clock time it became true, or None."""
+    end = time.monotonic() + timeout_s
+    while time.monotonic() < end:
+        if cond():
+            return now()
+        time.sleep(every)
+    print(f"full-boot: timed out waiting for {what} ({timeout_s:g} s)", file=sys.stderr)
+    return None
+
+
+def sh_ok(cmd):
+    return lambda: guest_ok(cmd)
+
+
+def thumbs(run, head, rows, outdir, width):
+    """Thumbnail the frame nearest each row time; returns [(row_index, frame dict, jpg path)]."""
+    frames = [json.loads(x) for x in open(os.path.join(run, f"head{head}", "frames.jsonl")) if x.strip()]
+    out = []
+    j = 0
+    for i, (t, _) in enumerate(rows):
+        while j + 1 < len(frames) and abs(frames[j + 1]["t"] - t) <= abs(frames[j]["t"] - t):
+            j += 1
+        f = frames[j]
+        src = os.path.join(run, f"head{head}", "frames", f"{f['n']:06d}.png")
+        dst = os.path.join(outdir, f"h{head}-{f['n']:06d}.jpg")
+        if not os.path.exists(dst):
+            subprocess.run(["magick", src, "-resize", f"{width}x", "-quality", "80", dst],
+                           check=False, capture_output=True)
+        out.append((i, f, dst))
+    return out
+
+
+def report(out, power_on, marks, heads, every_s, width=360):
+    run = os.path.join(out, "rec")
+    tdir = os.path.join(out, "thumbs"); os.makedirs(tdir, exist_ok=True)
+    sdir = os.path.join(out, "sheets"); os.makedirs(sdir, exist_ok=True)
+    last = max(m["t"] for m in marks)
+    t_end = last + 4_000_000_000
+    rows = []                                   # (t, label)
+    t = power_on
+    while t < t_end:
+        rows.append((t, ""))
+        t += int(every_s * 1e9)
+    for m in marks:                             # a row at each mark, between the periodic ones
+        rows.append((m["t"], m["name"]))
+    rows.sort()
+    per_head = {h: thumbs(run, h, rows, tdir, width) for h in heads}
+    for h in heads:                             # one contact sheet per head
+        jpgs = [p for _, _, p in per_head[h] if os.path.exists(p)]
+        if jpgs and shutil.which("magick"):
+            subprocess.run(["magick", "montage", *jpgs, "-tile", "4x", "-geometry", f"{width}x+4+4",
+                            "-background", "#222", os.path.join(sdir, f"head{h}.png")],
+                           check=False, capture_output=True)
+    cells = []
+    for i, (t, label) in enumerate(rows):
+        tds = []
+        for h in heads:
+            _, f, p = per_head[h][i]
+            rel = os.path.relpath(p, out)
+            full = os.path.relpath(os.path.join(run, f"head{h}", "frames", f"{f['n']:06d}.png"), out)
+            inact = " (inactive: no scanout)" if f.get("inactive") else ""
+            tds.append(f'<td><a href="{html.escape(full)}"><img src="{html.escape(rel)}" width="{width}" loading="lazy"></a>'
+                       f'<div class="c">head {h} frame {f["n"]}{inact}</div></td>')
+        cls = ' class="mark"' if label else ""
+        cells.append(f'<tr{cls}><th>{(t - power_on) / 1e9:.1f} s<br>{html.escape(label)}</th>{"".join(tds)}</tr>')
+    doc = f"""<!doctype html><meta charset="utf-8"><title>desktop-boot full boot</title>
+<style>body{{font:13px sans-serif;background:#111;color:#ddd;margin:16px}}table{{border-collapse:collapse}}
+th{{text-align:right;padding:4px 8px;vertical-align:top;white-space:nowrap;color:#9ab}}td{{padding:2px;vertical-align:top}}
+tr.mark th{{color:#fc6}}tr.mark td{{outline:1px solid #fc6}}.c{{font-size:11px;color:#889}}img{{display:block;background:#000}}</style>
+<h1>desktop-boot full boot</h1>
+<p>Rows are moments on the host clock (seconds since power-on), columns are heads, so a row shows the same
+instant on every screen. The nearest recorded frame is shown; click for the full frame. Head 2 is the
+portrait screen: its frames are the physical landscape scanout, so the content lies on its side.</p>
+<p>Contact sheets: {" ".join(f'<a href="sheets/head{h}.png">head {h}</a>' for h in heads)}</p>
+<table><tr><th></th>{"".join(f"<th>head {h}</th>" for h in heads)}</tr>{"".join(cells)}</table>"""
+    with open(os.path.join(out, "report.html"), "w") as f:
+        f.write(doc)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--out", help="output dir (default runs/desktop-boot-full-boot/<UTC>)")
+    ap.add_argument("--fps", type=float, default=5.0,
+                    help="frames per second per head (default 5: three heads at up to 4K are heavy; 30 works but is slow)")
+    ap.add_argument("--sheet-every", type=float, default=2.0, help="seconds between report rows (default 2)")
+    ap.add_argument("--password", default="qa", help="typed into the greeter (the profile's test user)")
+    ap.add_argument("--no-reboot", action="store_true", help="stop after the desktop")
+    ap.add_argument("--timeout", type=float, default=150, help="seconds allowed per wait (default 150)")
+    a = ap.parse_args()
+    if not shutil.which("ffmpeg"):
+        sys.exit("full-boot: needs ffmpeg")
+    out = os.path.abspath(a.out or os.path.join(HERE, "..", "..", "runs", "desktop-boot-full-boot",
+                                                time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())))
+    os.makedirs(out, exist_ok=True)
+    if vm("qmp", '{"execute":"query-status"}').returncode == 0:
+        sys.exit("full-boot: the guest is already running; `profiles/desktop-boot/vm down` first (this is a cold boot)")
+    marks, results = [], {}
+
+    def mark(name, t=None):
+        marks.append({"name": name, "t": t or now()})
+        print(f"[{(marks[-1]['t'] - marks[0]['t']) / 1e9:7.1f}s] {name}", flush=True)
+
+    vm("up", check=True)
+    power_on = now()
+    mark("power-on", power_on)
+    rec = os.path.join(out, "rec")
+    r = vm("record", "start", "--fps", str(a.fps), "--heads", "all", "--out", rec)
+    if r.returncode:
+        vm("down")
+        sys.exit(f"full-boot: record start failed: {r.stdout} {r.stderr}")
+    mark("record-started")
+    ok = True
+    greeter = "pgrep -x vigil >/dev/null || pgrep -x agreety >/dev/null"
+    t = wait_for("the greeter", sh_ok(greeter), a.timeout)
+    results["greeter_reached"] = t is not None
+    if t:
+        mark("greeter", t)
+        time.sleep(3)
+        vm("type", a.password); vm("keys", "ret")
+        mark("login-sent")
+        t = wait_for("the desktop", sh_ok("qa-session hyprctl -j monitors | python3 -c 'import json,sys; sys.exit(0 if len(json.load(sys.stdin))>=3 else 1)' && pgrep -x waybar >/dev/null"), a.timeout)
+        results["desktop_reached"] = t is not None
+        if t:
+            mark("desktop", t)
+            time.sleep(6)
+            if not a.no_reboot:
+                vm("ssh", "sudo systemctl reboot")
+                mark("reboot-sent")
+                wait_for("the guest to go down", lambda: not guest_ok("true", 6), 60, 1)
+                t = wait_for("the second boot's greeter", sh_ok(greeter), a.timeout)
+                results["reboot_back_to_greeter"] = t is not None
+                if t:
+                    mark("greeter-2", t); time.sleep(4)
+                else:
+                    ok = False
+        else:
+            ok = False
+    else:
+        ok = False
+    mark("stop")
+    stop = vm("record", "stop", timeout=300)
+    print(stop.stdout.strip())
+    results["recorder_summaries"] = {}
+    heads = []
+    try:
+        heads = [h["head"] for h in json.load(open(os.path.join(rec, "heads.json")))["heads"]]
+    except (OSError, ValueError, KeyError):
+        pass
+    for h in heads:
+        try:
+            S = json.load(open(os.path.join(rec, f"head{h}", "summary.json")))
+        except (OSError, ValueError):
+            S = {}
+        results["recorder_summaries"][f"head{h}"] = {k: S.get(k) for k in
+            ("frames", "fps", "duration_s", "inactive_frames", "degraded", "error")}
+    results["every_head_recorded"] = bool(heads) and all(
+        (results["recorder_summaries"][f"head{h}"].get("frames") or 0) > 0 for h in heads)
+    with open(os.path.join(out, "marks.json"), "w") as f:
+        json.dump({"clock": "CLOCK_MONOTONIC ns", "marks": marks}, f, indent=1)
+    if heads and shutil.which("magick"):
+        report(out, power_on, marks, heads, a.sheet_every)
+    elif heads:
+        print("full-boot: ImageMagick (magick) not found; no report.html, the frames are in rec/", file=sys.stderr)
+    ok = ok and results["every_head_recorded"]
+    results["ok"] = ok
+    with open(os.path.join(out, "results.json"), "w") as f:
+        json.dump(results, f, indent=1)
+    print(f"report: {os.path.join(out, 'report.html')}\nframes: {rec}/head<N>/frames/%06d.png (times in frames.jsonl)")
+    print("results:", json.dumps({k: v for k, v in results.items() if k != "recorder_summaries"}))
+    vm("down")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

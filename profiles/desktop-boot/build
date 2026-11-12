@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# build — produce the desktop-boot guest from scratch on the KVM host.
+#
+#   profiles/desktop-boot/build
+#
+# 1. cache the newest Arch Linux cloud image (sha256-verified) under $BASE_DIR
+# 2. create a fresh per-profile qcow2 overlay on it
+# 3. build the cloud-init NoCloud seed ISO with xorriso
+# 4. first boot (UEFI/OVMF, three virtio heads): cloud-init starts the provisioning
+#    service (full upgrade; hyprland, uwsm, greetd, plymouth, GRUB on the ESP, the
+#    desktop-boot and vigil dependencies; config for three monitors)
+# 5. reboot cold and check the chain's base: firmware to GRUB to the kernel with
+#    three DRM connectors, a GRUB NVRAM entry, the greeter on tty1
+# 6. shut down
+#
+# The guest has no desktop-boot and no vigil yet: install-desktop-boot adds them
+# (any branch), and the greeter falls back to agreety until then. Destroys any
+# previous overlay and OVMF NVRAM; keeps cached base images.
+# Everything runs under nice 19 / ionice idle.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=profile.env
+. "$HERE/profile.env"
+VM="$HERE/vm"
+SHARED="$HERE/../plain-hyprland/files"
+
+T0=$(date +%s)
+phase() { echo "== [$(( $(date +%s) - T0 ))s] $1"; }
+die() {
+    echo "build: $*" >&2
+    if [ -S "$VMKIT_DIR/qmp.sock" ]; then
+        echo "--- serial (last 30) ---" >&2; tail -n 30 "$VMKIT_DIR/serial.log" >&2 || true
+        echo "(VM left running for inspection: $VM ssh / $VM down)" >&2
+    fi
+    exit 1
+}
+
+for c in qemu-img xorriso curl sha256sum openssl python3 ss setsid ionice; do
+    command -v "$c" >/dev/null || die "missing host tool: $c"
+done
+[ -x "$VMKIT" ] || die "vmkit not found at $VMKIT (set VMKIT=)"
+[ -f "$SSH_PUB" ] || die "no ssh pubkey at $SSH_PUB"
+ovmf=""
+for f in /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd; do
+    [ -f "$f" ] && { ovmf="$f"; break; }
+done
+[ -n "$ovmf" ] || die "no OVMF firmware on the host (install edk2-ovmf)"
+
+if [ -S "$VMKIT_DIR/qmp.sock" ] && "$VM" qmp '{"execute":"query-status"}' >/dev/null 2>&1; then
+    die "$PROFILE is running; '$VM down' first"
+fi
+
+phase "base image"
+mkdir -p "$BASE_DIR" "$PROFILE_DIR"
+latest=$(curl -fsSL "$ARCH_IMAGES_URL/" \
+    | grep -oE 'Arch-Linux-x86_64-cloudimg-[0-9]+\.[0-9]+\.qcow2' | sort -uV | tail -n1) \
+    || die "could not read $ARCH_IMAGES_URL/"
+[ -n "$latest" ] || die "no dated cloudimg in $ARCH_IMAGES_URL/"
+BASE="$BASE_DIR/$latest"
+if [ -f "$BASE" ]; then
+    echo "   cached: $BASE"
+else
+    echo "   downloading $latest"
+    want=$(curl -fsSL "$ARCH_IMAGES_URL/$latest.SHA256" | awk '{print $1}')
+    [ -n "$want" ] || die "no checksum for $latest"
+    nice -n 19 ionice -c3 curl -fL --progress-bar "$ARCH_IMAGES_URL/$latest" -o "$BASE.partial"
+    got=$(nice -n 19 ionice -c3 sha256sum "$BASE.partial" | awk '{print $1}')
+    [ "$got" = "$want" ] || { rm -f "$BASE.partial"; die "sha256 mismatch for $latest"; }
+    mv "$BASE.partial" "$BASE"
+    chmod a-w "$BASE"
+fi
+
+phase "overlay"
+rm -rf "$VMKIT_DIR"
+rm -f "$OVERLAY"
+qemu-img create -q -f qcow2 -F qcow2 -b "$BASE" "$OVERLAY"
+qemu-img resize -q "$OVERLAY" "$DISK_SIZE"
+echo "   $OVERLAY -> $(basename "$BASE") ($DISK_SIZE)"
+
+phase "seed iso"
+seed_dir="$PROFILE_DIR/seed"
+rm -rf "$seed_dir"; mkdir -p "$seed_dir"
+b64() { base64 -w0 "$1"; }
+python3 - "$HERE/user-data.tmpl" "$seed_dir/user-data" \
+    "@SSH_PUBKEY@=$(tr -d '\n' <"$SSH_PUB")" \
+    "@PASSWD_HASH@=$(openssl passwd -6 qa)" \
+    "@PROVISION_B64@=$(b64 "$HERE/files/provision.sh")" \
+    "@PROFILE_ENV_B64@=$(b64 "$HERE/profile.env")" \
+    "@QA_SESSION_B64@=$(b64 "$SHARED/qa-session")" \
+    "@HYPRLAND_QA_B64@=$(b64 "$HERE/files/hyprland-qa.lua.tmpl")" \
+    "@GREETD_B64@=$(b64 "$HERE/files/greetd.toml")" \
+    "@VIGIL_TOML_B64@=$(b64 "$HERE/files/vigil.toml")" \
+    "@SESSION_B64@=$(b64 "$HERE/files/desktop-boot.session")" \
+    "@FOOT_INI_B64@=$(b64 "$SHARED/foot.ini")" \
+    "@USB_RULE_B64@=$(b64 "$SHARED/99-hypr-qa-usb-no-autosuspend.rules")" <<'PY'
+import sys
+src, dst, *subs = sys.argv[1:]
+text = open(src).read()
+for s in subs:
+    k, v = s.split("=", 1)
+    assert k in text, f"placeholder {k} not in template"
+    text = text.replace(k, v)
+open(dst, "w").write(text)
+PY
+grep -q '@[A-Z_]*@' "$seed_dir/user-data" && die "unfilled placeholder in user-data"
+cat >"$seed_dir/meta-data" <<META
+instance-id: $PROFILE-$(date -u +%Y%m%d%H%M%S)
+local-hostname: $PROFILE
+META
+rm -f "$SEED"
+(cd "$seed_dir" && xorriso -as mkisofs -quiet -V cidata -J -r -o "$SEED" user-data meta-data)
+echo "   $SEED"
+
+phase "first boot to ssh"
+"$VM" up
+"$VM" wait ssh 300 || die "ssh never came up"
+
+phase "provisioning"
+st=none
+for _ in $(seq 1 480); do   # up to 40 min
+    st=$("$VM" ssh 'cat /var/lib/hypr-qa/status 2>/dev/null || echo none' 2>/dev/null || echo unreachable)
+    case "$st" in
+        ok) break ;;
+        fail) "$VM" ssh 'sudo tail -n 40 /var/log/hypr-qa-provision.log' >&2 || true
+              die "provisioning failed" ;;
+    esac
+    sleep 5
+done
+[ "$st" = ok ] || { "$VM" ssh 'sudo tail -n 40 /var/log/hypr-qa-provision.log' >&2 || true; die "provisioning timed out (status=$st)"; }
+"$VM" ssh 'grep "== installed" /var/log/hypr-qa-provision.log' || true
+
+phase "cold reboot"
+"$VM" ssh 'sudo systemctl reboot' >/dev/null 2>&1 || true
+for _ in $(seq 1 30); do "$VM" ssh true >/dev/null 2>&1 || break; sleep 1; done
+"$VM" wait ssh 300 || die "ssh did not return after the reboot"
+
+phase "checks"
+conns=$("$VM" ssh 'ls /sys/class/drm | grep -c "^card[0-9]*-Virtual-[0-9]$"')
+[ "$conns" = "$GPU_HEADS" ] || die "expected $GPU_HEADS Virtual-N connectors, found $conns"
+echo "   connectors: $("$VM" ssh 'ls /sys/class/drm | grep "^card[0-9]*-Virtual-" | tr "\n" " "')"
+"$VM" ssh 'cat /proc/cmdline' | sed 's/^/   cmdline: /'
+"$VM" ssh 'sudo efibootmgr' | grep -q ' GRUB' || die "no GRUB entry in the guest's NVRAM"
+echo "   NVRAM: GRUB entry present"
+"$VM" ssh 'systemctl is-active greetd' | sed 's/^/   greetd: /'
+"$VM" heads | sed 's/^/   head /'
+
+phase "shutdown"
+pid=$(cat "$VMKIT_DIR/qemu.pid" 2>/dev/null || true)
+"$VM" down >/dev/null
+for _ in $(seq 1 60); do [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+[ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null || die "qemu (pid $pid) still running after down"
+qemu-img check -q "$OVERLAY" || die "qemu-img check failed on $OVERLAY"
+
+echo "== done in $(( $(date +%s) - T0 ))s: $OVERLAY"
