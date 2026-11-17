@@ -1,19 +1,4 @@
 #!/usr/bin/env python3
-"""A stand-in for `hyprhands serve`: the same stdio framing, no Wayland.
-
-Request: u32 BE length + JSON {"op": ...}. Reply: u32 BE length + JSON, plus
-raw bytes when the header has "blob": n. Exits 0 at a clean end of input.
-
-Ops:
-  anything      {"ok": true, "op": op, "echo": request}
-  fail          {"ok": false, "error": "fake failure"}
-  capture       {"ok": true, "op": "capture", "blob": n} + n bytes (request "size", default 16)
-  sleep         waits request "ms" (default 50) before replying
-  exit          exits without replying (a serve that dies mid-request)
-  garbage       writes a length prefix and non-JSON
-Stdlib only, so it also runs inside the guest (push it, then use it as the
-[hyprhands] argv).
-"""
 import json
 import struct
 import sys

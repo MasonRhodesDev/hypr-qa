@@ -1,8 +1,3 @@
-"""TOML value -> Lua table literal, for `hyprctl eval 'hl.config({...})'`.
-
-Hyprland 0.56 reads Lua only and rejects `hyprctl keyword`, so `[guest] hyprland`
-is converted to a literal and passed to hl.config().
-"""
 import math
 import re
 
@@ -36,7 +31,6 @@ def lua_key(k):
 
 
 def to_lua(v, path="hyprland"):
-    """Convert a TOML value (dict/list/str/int/float/bool) to a Lua literal."""
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, int):
@@ -59,7 +53,6 @@ def to_lua(v, path="hyprland"):
 
 
 def hl_config(table):
-    """The expression for `hyprctl eval`: hl.config({...})."""
     if not isinstance(table, dict):
         raise LuaError("hl.config() takes a table")
     return f"hl.config({to_lua(table)})"

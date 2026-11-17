@@ -1,12 +1,3 @@
-"""hypr-qa command line.
-
-  hypr-qa run SCENARIO.toml [--runs-dir DIR] [--down]
-  hypr-qa check RUN_DIR [--scenario FILE]
-  hypr-qa validate SCENARIO.toml...
-
-Exit codes: 0 all passed, 1 a check failed, 2 an error (bad scenario, boot,
-precheck, setup, a failed action, an unresolvable window).
-"""
 import argparse
 import sys
 import traceback
@@ -17,7 +8,7 @@ from .scenario import ScenarioError, load
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="hypr-qa", description="Hyprland QA scenarios in a VM (see docs/scenario-schema.md)")
+    ap = argparse.ArgumentParser(prog="hypr-qa", description="Hyprland QA scenarios in a VM")
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="boot/restore, record, perform the steps, check, report")
     r.add_argument("scenario")
@@ -51,7 +42,7 @@ def main(argv=None):
     except runner.Terminated:
         print("hypr-qa: terminated (SIGTERM)", file=sys.stderr)
         return 2
-    except Exception:   # a bug, never "check failed" (1) or a pass
+    except Exception:
         traceback.print_exc()
         print("hypr-qa: unexpected error (exit 2)", file=sys.stderr)
         return 2

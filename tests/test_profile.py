@@ -1,4 +1,3 @@
-"""profiles/plain-hyprland/vm against a fake vmkit (no QEMU)."""
 import os
 import shutil
 import socket
@@ -26,7 +25,7 @@ class Restore(unittest.TestCase):
         with open(vmkit, "w") as f:
             f.write(FAKE_VMKIT)
         os.chmod(vmkit, 0o755)
-        sock = socket.socket(socket.AF_UNIX)   # qmp_alive only needs a socket file there
+        sock = socket.socket(socket.AF_UNIX)
         self.addCleanup(sock.close)
         sock.bind(os.path.join(tmp, "qmp.sock"))
         env = dict(os.environ, VMKIT=vmkit, VMKIT_DIR=tmp, OVERLAY=os.path.join(tmp, "o.qcow2"),
@@ -34,8 +33,8 @@ class Restore(unittest.TestCase):
         r = subprocess.run([VM, "restore", "snap"], env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
         calls = open(log).read().splitlines()
-        self.assertIn("restore-step|qmp", calls)          # loadvm carries the step
-        self.assertIn("|ssh", calls)                      # the hwclock resync does not
+        self.assertIn("restore-step|qmp", calls)
+        self.assertIn("|ssh", calls)
         self.assertNotIn("restore-step|ssh", calls)
 
 

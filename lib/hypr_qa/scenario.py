@@ -1,9 +1,3 @@
-"""Load and validate a scenario TOML file (docs/scenario-schema.md).
-
-Validation is strict: an unknown key anywhere is an error, so a typo such as
-`setle_ms` fails loudly instead of being ignored. Every error names where it
-is (`step[2] "open-foot" expect[1]: ...`).
-"""
 import json
 import os
 import re
@@ -12,15 +6,10 @@ import tomllib
 from . import lua
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-# push paths reach a remote shell line (vmkit push, sudo chmod): no quoting needed.
 PUSH_PATH_RE = re.compile(r"^[A-Za-z0-9._/@:+,=-]+$")
 
-# ---- `at` ---------------------------------------------------------------------
-# A strict subset of vmkit's timeline grammar (lib/vmkit/timeline.py), so anything
-# accepted here is accepted there: a signed offset with a unit, or a window a..b.
 _OFFSET = re.compile(r"^([+-])(\d+(?:\.\d+)?)(ms|s)$")
 _UNIT_NS = {"ms": 1_000_000, "s": 1_000_000_000}
-# The run records this long (at most) before step 1 so negative offsets have frames: cap it.
 MIN_OFFSET_NS = -30 * 1_000_000_000
 
 
@@ -29,7 +18,6 @@ class ScenarioError(Exception):
 
 
 def parse_offset(s):
-    """'+300ms' | '-100ms' | '+1.5s' -> signed ns."""
     m = _OFFSET.match(s.strip()) if isinstance(s, str) else None
     if not m:
         raise ScenarioError(f"bad offset {s!r}: want a sign, a number and ms or s, e.g. +300ms, -100ms, +1.5s")
@@ -39,7 +27,6 @@ def parse_offset(s):
 
 
 def parse_at(spec):
-    """'+300ms' -> ('point', ns); '+50ms..+300ms' -> ('window', a_ns, b_ns)."""
     if not isinstance(spec, str):
         raise ScenarioError(f"at must be a string like \"+300ms\" or \"+50ms..+300ms\", got {spec!r}")
     if ".." in spec:
@@ -57,12 +44,9 @@ def parse_at(spec):
 
 
 def at_bounds(spec):
-    """(earliest, latest) offset in ns that `at` can select."""
     p = parse_at(spec)
     return (p[1], p[1]) if p[0] == "point" else (p[1], p[2])
 
-
-# ---- helpers ------------------------------------------------------------------
 
 def _where(*parts):
     return " ".join(p for p in parts if p)
@@ -112,8 +96,6 @@ def _region(v, where):
     if v[2] < 0 or v[3] < 0:
         raise ScenarioError(f"{where}: region w and h must be >= 0 (0 = to the edge), got {v!r}")
 
-
-# ---- expectations -------------------------------------------------------------
 
 COMMON_EXPECT = {"at", "anchor", "check", "mode", "not"}
 CHECK_FIELDS = {
@@ -189,8 +171,6 @@ def validate_expect(e, where):
             raise ScenarioError(f"{where}: fuzz must be a percentage 0-100, got {e['fuzz']!r}")
 
 
-# ---- steps, setup, top level --------------------------------------------------
-
 ACTIONS = ("hyprhands", "vmkit", "session", "hyprctl", "wait_ms")
 SETUP = ("push", "session")
 TOP = {"name", "profile", "snapshot", "head", "stop_on_fail", "guest", "setup", "hyprhands", "step"}
@@ -224,7 +204,6 @@ def validate_do(do, where):
 
 
 def validate(doc):
-    """Validate a parsed scenario dict in place; returns it."""
     _check_keys(doc, TOP, "scenario", required=("name", "profile", "step"))
     for k in ("name", "profile"):
         if not isinstance(doc[k], str) or not NAME_RE.match(doc[k]):
@@ -304,11 +283,9 @@ def load(path):
 
 
 def template_images(doc):
-    """Every template image path the scenario references (as written)."""
     return [e["image"] for st in doc["step"] for e in st.get("expect", []) if e["check"] == "template"]
 
 
 def asset_name(rel):
-    """Where a scenario-relative asset is stored inside a run dir (assets/...)."""
     parts = [p if p not in ("..", ".") else "_up" if p == ".." else "" for p in os.path.normpath(rel).split(os.sep)]
     return os.path.join("assets", *[p for p in parts if p])

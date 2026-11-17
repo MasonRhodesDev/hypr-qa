@@ -1,14 +1,3 @@
-"""The hyprhands serve wire protocol (hyprhands src/proto.rs) and a stamped client.
-
-Request: u32 big-endian length, then that many bytes of JSON {"op": ..., ...args}.
-Reply:   u32 big-endian length, then JSON {"ok": true, ...} or {"ok": false, "error": ...};
-         when the JSON has "blob": n, exactly n raw bytes follow it.
-
-The client starts ONE long-lived serve process (any argv: `vm session hyprhands
-serve ...` in a run, the fake stub in tests) and stamps every request on the
-host's CLOCK_MONOTONIC: t_send just before the request is written, t_ack once
-the whole reply (header and blob) has been read.
-"""
 import json
 import os
 import select
@@ -30,14 +19,12 @@ def encode(obj):
 
 
 def encode_reply(header, blob=None):
-    """What serve writes (used by the fake serve and tests)."""
     if blob is not None:
         header = dict(header, blob=len(blob))
     return encode(header) + (blob or b"")
 
 
 def read_exact(fd, n, deadline):
-    """n bytes from fd before the monotonic deadline (seconds), or ProtoError."""
     buf = bytearray()
     while len(buf) < n:
         left = deadline - time.monotonic()
@@ -54,7 +41,6 @@ def read_exact(fd, n, deadline):
 
 
 def read_message(fd, deadline):
-    """(header dict, blob bytes or None) from fd."""
     (n,) = struct.unpack(">I", read_exact(fd, 4, deadline))
     if n > MAX_REPLY:
         raise ProtoError(f"reply header of {n} bytes is over the limit")
@@ -74,7 +60,6 @@ def read_message(fd, deadline):
 
 
 def killpg(p, sig):
-    """Signal p's process group (p was started with start_new_session=True)."""
     try:
         os.killpg(p.pid, sig)
     except (ProcessLookupError, PermissionError):
@@ -82,20 +67,15 @@ def killpg(p, sig):
 
 
 class Serve:
-    """One long-lived serve process. request() is synchronous: one in flight."""
-
     def __init__(self, argv, stderr_path=None, env=None, timeout=30.0):
         self.argv, self.timeout = list(argv), timeout
         self._err = open(stderr_path, "ab") if stderr_path else subprocess.DEVNULL
-        # Own process group: a kill reaches vm -> vmkit -> ssh, not just the wrapper.
         self.p = subprocess.Popen(self.argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=self._err, env=env, bufsize=0, start_new_session=True)
         self.dead = None
-        self.killed = False   # close() had to kill it (the far end may still be running)
+        self.killed = False
 
     def request(self, req, timeout=None):
-        """Send req; returns a record {t_send, t_ack, ok, reply, blob, error?}. Never raises
-        for protocol or serve failures: they come back as ok=False with the error."""
         if self.dead:
             t = time.monotonic_ns()
             return {"t_send": t, "t_ack": t, "ok": False, "error": self.dead, "reply": None, "blob": None}
@@ -121,7 +101,6 @@ class Serve:
         return rec
 
     def close(self, timeout=10.0):
-        """EOF on stdin (serve exits cleanly at end of input), then wait; kill if it hangs."""
         try:
             self.p.stdin.close()
         except OSError:
@@ -135,7 +114,7 @@ class Serve:
                 rc = self.p.wait(5)
             except subprocess.TimeoutExpired:
                 rc = None
-            killpg(self.p, signal.SIGKILL)   # the leader may be gone while its children linger
+            killpg(self.p, signal.SIGKILL)
             if rc is None:
                 rc = self.p.wait()
         if self._err is not subprocess.DEVNULL:

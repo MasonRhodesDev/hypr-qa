@@ -9,7 +9,7 @@ Hyprland parts:
   into a Hyprland session, always with QMP. First profile: `plain-hyprland`.
 - **Session helpers**: push a binary, run commands inside the guest's Hyprland
   session, apply Hyprland options (`hyprctl eval 'hl.config({...})'`).
-- **Scenarios** (`docs/scenario-schema.md`): TOML files of steps, where each step is an action
+- **Scenarios**: TOML files of steps, where each step is an action
   plus checks on the frames recorded at set offsets after it. The run writes a
   report with a contact sheet per step, a pass/fail summary and the video.
 

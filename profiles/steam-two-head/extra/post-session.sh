@@ -1,8 +1,4 @@
 #!/bin/bash
-# Host side, given the vm wrapper: start Steam so its client bootstrap (a few hundred MB from
-# Valve's CDN) is in the snapshot, wait for the login window, stop it. Twice: the first launch
-# after the install re-extracts the client package (and restores its stock files), a second one
-# settles it, so a launch in a scenario is an ordinary one and not a client update in disguise.
 set -euo pipefail
 VM="$1"
 
@@ -20,7 +16,6 @@ sys.exit(0 if any(c["class"] == "steam" for c in json.load(sys.stdin)) else 1)';
     done
     [ "$up" = 1 ] || { "$VM" ssh 'tail -n 20 ~/.local/share/Steam/logs/bootstrap_log.txt 2>&1' >&2; return 1; }
     sleep 10
-    # -x: pkill -f would match this ssh command line too.
     "$VM" ssh 'pkill -x steam; pkill -x steamwebhelper; sleep 4; pgrep -x steam || true'
 }
 

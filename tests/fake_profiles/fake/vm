@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""A fake profile `vm` wrapper for the runner's tests: no QEMU.
-
-State lives in $FAKE_VM_STATE. It stamps actions like vmkit (actions.jsonl with
-t_send/t_ack/ok/step from $VMKIT_STEP), "records" by writing synthetic frames at
-`record stop` (8x8 PNGs every 33 ms since `record start`: black, white once a
-`keys` action has happened), runs `session CMD...` locally (so the fake
-hyprhands serve works through it), and hands `check`/`report` to the real vmkit
-($VMKIT). $FAKE_VM_FAIL names a command to fail (e.g. "qa-cursor-plane");
-$FAKE_VM_CHECK_DROP names an expectation id to drop from `check batch` output.
-"""
 import json
 import os
 import subprocess
@@ -65,11 +55,11 @@ def main(a):
         return 0
     if cmd == "session":
         argv = a[1:]
-        if argv[0] == "pkill":   # guest-side cleanup: never run it on this host
+        if argv[0] == "pkill":
             return 0
         if argv[0] == "hyprctl":
             t = now(); stamp("ssh", " ".join(argv), t, now())
-            if argv[1:2] == ["keyword"]:   # Hyprland 0.56: refused, yet exit 0
+            if argv[1:2] == ["keyword"]:
                 print("keyword can't work with non-legacy parsers. Use eval.")
             else:
                 print("ok")
@@ -90,7 +80,7 @@ def main(a):
             open(os.path.join(ST, "record.run"), "w").write(out)
             open(os.path.join(ST, "record.t0"), "w").write(str(now()))
             print(out)
-            return 1 if fail == "after-start" else 0   # the recorder started, then start "failed" (timeout)
+            return 1 if fail == "after-start" else 0
         if a[1] == "stop":
             out = rec_run()
             os.unlink(os.path.join(ST, "record.run"))
@@ -119,7 +109,7 @@ def main(a):
             return 0
     if cmd in ("check", "report"):
         rc = subprocess.call([VMKIT, "--dir", ST, *a])
-        drop = os.environ.get("FAKE_VM_CHECK_DROP")   # an expectation id vmkit "forgets"
+        drop = os.environ.get("FAKE_VM_CHECK_DROP")
         if cmd == "check" and drop:
             out = a[a.index("-o") + 1]
             rows = [r for r in json.load(open(out)) if r.get("id") != drop]

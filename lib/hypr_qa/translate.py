@@ -1,15 +1,3 @@
-"""[[step.expect]] -> `vmkit check batch` input.
-
-Each expectation becomes one object anchored on its step's action, which the
-runner labels with VMKIT_STEP (vmkit actions) or writes itself (hyprhands,
-wait_ms) as `step` in actions.jsonl:
-
-  {"id": "<step>#<k>", "action": "<step>", "anchor": "send"|"ack", "at": ...,
-   "mode": "any"|"all", "check": ..., ...check fields..., "not"?: true}
-
-k is 1-based within the step. Template images are resolved to absolute paths
-here: the schema makes them relative to the scenario, vmkit to EXPECT.json.
-"""
 from .scenario import CHECK_FIELDS
 
 
@@ -23,9 +11,6 @@ def split_id(eid):
 
 
 def default_mode(e):
-    """The mode, always explicit (never left to vmkit's default). Schema v0.3: a
-    window is `any`, but with `not` it means "in no frame", so `all`. A point
-    selects one frame, where any and all agree."""
     if "mode" in e:
         return e["mode"]
     return "all" if e.get("not") else "any"
@@ -46,8 +31,6 @@ def translate_expect(step_id, k, e, resolve_asset=None):
 
 
 def translate(doc, performed=None, resolve_asset=None):
-    """The check-batch list for every expectation of every performed step
-    (performed: a set of step ids; None = all)."""
     batch = []
     for st in doc["step"]:
         if performed is not None and st["id"] not in performed:

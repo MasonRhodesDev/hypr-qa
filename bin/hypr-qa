@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""hypr-qa launcher: the code is in lib/hypr_qa (see lib/hypr_qa/cli.py)."""
 import os
 import sys
 

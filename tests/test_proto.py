@@ -66,7 +66,7 @@ class AgainstFakeServe(unittest.TestCase):
         self.assertTrue(r["ok"])
         self.assertEqual(r["reply"]["blob"], 1000)
         self.assertEqual(r["blob"], bytes(i % 256 for i in range(1000)))
-        self.assertTrue(self.s.request({"op": "state"})["ok"])   # stream still in sync after the blob
+        self.assertTrue(self.s.request({"op": "state"})["ok"])
 
     def test_error_reply_is_not_fatal(self):
         r = self.s.request({"op": "fail"})
@@ -103,14 +103,12 @@ def alive(pid):
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    # a zombie is dead too
     with open(f"/proc/{pid}/stat") as f:
         return f.read().rsplit(")", 1)[1].split()[0] != "Z"
 
 
 class Close(unittest.TestCase):
     def test_close_kills_the_whole_process_group(self):
-        """bash -> bash -> python, like vm -> vmkit -> ssh: a hung serve's descendants die too."""
         tmp = tempfile.mkdtemp(prefix="hqa-hang-")
         self.addCleanup(shutil.rmtree, tmp)
         pidf, script = os.path.join(tmp, "pid"), os.path.join(tmp, "hang.py")
