@@ -1,19 +1,9 @@
 #!/bin/sh
-# qa-cursor-plane — is the DRM hardware cursor plane in use?
-#
-# When Hyprland puts the pointer on the cursor plane, QMP screendump (and so
-# every recorded frame) omits it. When the plane is unused, the pointer is
-# composited into the framebuffer and shows up in frames.
-#
-# Prints one line per cursor plane: "cursor-plane <id> crtc=<..> fb=<..> <unused|IN USE>"
-# Exit 0: no cursor plane in use (pointer is in frames). 1: a cursor plane is
-# in use. 2: could not tell. Needs sudo (debugfs); mounts debugfs if needed.
 set -u
 card=${1:-0}
 state=/sys/kernel/debug/dri/$card/state
 sudo test -r "$state" 2>/dev/null || sudo mount -t debugfs none /sys/kernel/debug 2>/dev/null
 sudo test -r "$state" || { echo "qa-cursor-plane: no $state" >&2; exit 2; }
-# Plane ids whose immutable "type" property is Cursor (=2), from libdrm's modetest.
 drv=$(sudo cat "/sys/kernel/debug/dri/$card/name" | cut -d' ' -f1)
 ids=$(modetest -M "$drv" -p 2>/dev/null | awk '
     /^[0-9]+\t/ { id=$1 }

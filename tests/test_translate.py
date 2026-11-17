@@ -61,9 +61,9 @@ class Translate(unittest.TestCase):
 
     def test_mode_defaults(self):
         b = {e["id"]: e for e in X.translate(self.doc)}
-        self.assertEqual(b["open#1"]["mode"], "any")      # window: any
-        self.assertEqual(b["open#2"]["mode"], "all")      # not: never (schema v0.3)
-        self.assertEqual(b["open#3"]["mode"], "any")      # explicit mode wins over the not default
+        self.assertEqual(b["open#1"]["mode"], "any")
+        self.assertEqual(b["open#2"]["mode"], "all")
+        self.assertEqual(b["open#3"]["mode"], "any")
 
     def test_not_only_when_true(self):
         b = X.translate(self.doc)

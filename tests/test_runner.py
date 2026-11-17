@@ -1,6 +1,3 @@
-"""The runner end to end against a fake profile `vm` (tests/fake_profiles/fake/vm)
-and the fake hyprhands serve: no QEMU. Checks and the report are the real vmkit's,
-found at $VMKIT or ~/repos/vmkit/bin/vmkit; skipped without it."""
 import json
 import os
 import shutil
@@ -143,11 +140,11 @@ class Kills(unittest.TestCase):
         r, pidf, _ = self.serve_runner(sys.executable)
         r.start_serve()
         self.assertTrue(r.serve.request({"op": "ping"})["ok"])
-        self.assertEqual(int(open(pidf).read()), r.serve.p.pid)   # the fake vm runs `session` in place
+        self.assertEqual(int(open(pidf).read()), r.serve.p.pid)
         self.assertEqual(r.serve.close(), 0)
 
     def test_forced_serve_close_kills_only_the_recorded_serve(self):
-        r, pidf, calls = self.serve_runner(sys.executable)   # an interpreter: never pkill by name
+        r, pidf, calls = self.serve_runner(sys.executable)
         serve, bystander = self.sleeper(r.serve_id), self.sleeper()
         with open(pidf, "w") as f:
             f.write(f"{serve.pid}\n")
@@ -160,7 +157,7 @@ class Kills(unittest.TestCase):
 
     def test_forced_serve_close_leaves_a_reused_pid_alone(self):
         r, pidf, _ = self.serve_runner(sys.executable)
-        other = self.sleeper()   # the serve is gone and its pid now belongs to something else
+        other = self.sleeper()
         with open(pidf, "w") as f:
             f.write(f"{other.pid}\n")
         r.serve = mock.Mock(killed=True, **{"close.return_value": -9})
@@ -188,7 +185,7 @@ class RunnerE2E(unittest.TestCase):
         self.state = os.path.join(self.tmp, "state")
         os.makedirs(self.state)
         self.env = {"FAKE_VM_STATE": self.state, "VMKIT": VMKIT, "HYPR_QA_RUNS": os.path.join(self.tmp, "runs"),
-                    "TMPDIR": self.tmp}   # the serve's pidfile
+                    "TMPDIR": self.tmp}
         self.old = {k: os.environ.get(k) for k in self.env}
         os.environ.update(self.env)
         self.scn = os.path.join(self.tmp, "s.toml")
@@ -219,7 +216,6 @@ class RunnerE2E(unittest.TestCase):
         self.assertEqual(res["status"], "pass", res)
         self.assertEqual(code, 0)
         self.assertEqual(res["counts"], {"pass": 4, "fail": 0, "error": 0})
-        # hyprhands requests land in actions.jsonl in vmkit's shape, with the step label
         acts = runner.load_jsonl(os.path.join(run, "actions.jsonl"))
         hh = [a for a in acts if a["cmd"] == "hyprhands"]
         self.assertEqual([a["step"] for a in hh], ["hh-click", "hh-capture"])
@@ -228,7 +224,6 @@ class RunnerE2E(unittest.TestCase):
             self.assertLessEqual(a["t_send"], a["t_ack"])
         self.assertEqual((hh[0]["x"], hh[0]["y"]), (3, 4))
         self.assertEqual(os.path.getsize(os.path.join(run, "hyprhands", "hh-capture.blob")), 64)
-        # timeline, named frames, report, the hl.config call
         tl = runner.load_jsonl(os.path.join(run, "timeline.jsonl"))
         self.assertEqual([r["step"] for r in tl], ["baseline", "hh-click", "press", "hh-capture"])
         named = [f for f in os.listdir(os.path.join(run, "frames")) if not runner.FRAME_FILE.match(f)]
@@ -239,12 +234,10 @@ class RunnerE2E(unittest.TestCase):
         calls = open(os.path.join(self.state, "calls.log")).read()
         self.assertIn("session hyprctl eval hl.config({ cursor = { no_hardware_cursors = true } })", calls)
         self.assertIn("keys meta_l q  [step=press]", calls)
-        # the cursor-plane precheck runs after [guest] and [[setup]], right before recording
         order = [ln.split(" --out")[0] for ln in calls.splitlines()]
         self.assertLess(order.index("session sh -c true"), order.index("ssh qa-cursor-plane"))
         self.assertLess(order.index("ssh qa-cursor-plane"), order.index("record start"))
 
-        # check RUN_DIR: same verdict from the saved copy; a tuned scenario flips it
         self.assertEqual(runner.check_run(run, profiles_dir=os.path.join(HERE, "fake_profiles")), 0)
         tuned = os.path.join(self.tmp, "tuned.toml")
         with open(tuned, "w") as f:
@@ -258,12 +251,12 @@ class RunnerE2E(unittest.TestCase):
         code, run = self.run_it()
         self.assertEqual(code, 0)
         fake = os.path.join(HERE, "fake_profiles")
-        os.environ["FAKE_VM_FAIL"] = "batch"          # vmkit check batch fails without writing output
+        os.environ["FAKE_VM_FAIL"] = "batch"
         self.assertEqual(runner.check_run(run, profiles_dir=fake), 2)
         res = json.load(open(os.path.join(run, "results.json")))
         self.assertTrue(any("check batch wrote no results" in e for e in res["errors"]), res["errors"])
         del os.environ["FAKE_VM_FAIL"]
-        os.environ["FAKE_VM_CHECK_DROP"] = "press#2"  # vmkit answers, but without one expectation
+        os.environ["FAKE_VM_CHECK_DROP"] = "press#2"
         try:
             self.assertEqual(runner.check_run(run, profiles_dir=fake), 2)
         finally:

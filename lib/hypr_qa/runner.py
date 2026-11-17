@@ -1,19 +1,3 @@
-"""Run a scenario: boot, setup, precheck, record, act, check, report.
-
-Everything VM-side goes through the profile's `vm` wrapper (profiles/<name>/vm),
-which passes the profile's flags to vmkit. Recording, frame selection, checks
-and the report are vmkit's (`vm record`, `vm check batch`, `vm report`); this
-module only orders them, performs the steps and names things.
-
-Run dir (runs/<name>/<UTC>/), in addition to vmkit's recording files:
-  scenario.toml   the scenario as run (what `hypr-qa check` re-reads)
-  assets/         template images the scenario references
-  run.json        the runner's record: steps performed, runner errors
-  timeline.jsonl  one line per step: {step, kind, detail, t_send, t_ack, ok, error?}
-  expect.json     the check-batch input; checks.json its output (vmkit's list)
-  results.json    timing (from summary.json) first, then status, steps, expectations
-  runner.log      every vm command the runner ran, with its output
-"""
 import json
 import os
 import re
@@ -33,12 +17,7 @@ EXIT_PASS, EXIT_FAIL, EXIT_ERROR = 0, 1, 2
 VIDEO_NOTE = ("video.mkv is for watching only: it plays at the nominal rate, so stalls don't show in it. "
               "Timing comes from frames.jsonl (and the frame PNGs).")
 FRAME_FILE = re.compile(r"^\d{6}\.png$")
-# hyprctl commands that reply exactly "ok" on success. Hyprland 0.56.2 exits 7 on eval and
-# dispatch errors, but refuses `keyword` with exit 0, so the reply is checked too (as hyprhands does).
 HYPRCTL_OK_REPLY = ("dispatch", "eval", "keyword")
-# The serve runs through this guest wrapper ($0 = the run's serve id): it records its pid and a
-# marker in its environment, so a forced close kills exactly that process (argv[0] may be an
-# interpreter: never kill by name). One line: `vm session` quotes it with printf %q.
 SERVE_WRAPPER = 'echo $$ >"${TMPDIR:-/tmp}/hypr-qa-serve.$0.pid"; export HYPR_QA_SERVE="$0"; exec "$@"'
 SERVE_KILL = ('f="${TMPDIR:-/tmp}/hypr-qa-serve.$0.pid"; p=$(cat "$f" 2>/dev/null) || exit 0; rm -f "$f"; '
               'grep -qzx "HYPR_QA_SERVE=$0" "/proc/$p/environ" 2>/dev/null && kill -TERM "$p"; exit 0')
@@ -90,14 +69,12 @@ class RunError(Exception):
 
 
 class Terminated(BaseException):
-    """SIGTERM during the run's phases, raised in the main thread so the run takes its cleanup path."""
+    pass
 
 
 class VM:
-    """The profile's `vm` wrapper. Every call is logged to runner.log."""
-
     def __init__(self, profile, log_path=None, profiles_dir=None, head=0):
-        self.head = head          # the head recording, shots and checks read (VMKIT_HEAD)
+        self.head = head
         self.dir = os.path.join(profiles_dir or os.path.join(REPO, "profiles"), profile)
         self.path = os.path.join(self.dir, "vm")
         if not os.access(self.path, os.X_OK):
@@ -108,7 +85,7 @@ class VM:
         env = {k: v for k, v in os.environ.items() if k != "VMKIT_STEP"}
         if step:
             env["VMKIT_STEP"] = step
-        env["VMKIT_HEAD"] = str(self.head)      # the scenario's head wins over an inherited VMKIT_HEAD
+        env["VMKIT_HEAD"] = str(self.head)
         return env
 
     def argv(self, *args):
@@ -120,9 +97,7 @@ class VM:
                 f.write(text if text.endswith("\n") else text + "\n")
 
     def run(self, *args, step=None, timeout=120):
-        """(rc, stdout, stderr); rc None on timeout."""
         t0 = time.monotonic()
-        # Own process group, so a timeout or an interrupt kills vm -> vmkit -> ssh/act.py, not just vm.
         p = subprocess.Popen(self.argv(*args), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                              errors="replace", env=self.env(step), stdin=subprocess.DEVNULL, start_new_session=True)
         try:
@@ -132,7 +107,7 @@ class VM:
             proto.killpg(p, signal.SIGKILL)
             try:
                 out, err = p.communicate(timeout=10)
-            except subprocess.TimeoutExpired:   # something outside the group holds the pipes
+            except subprocess.TimeoutExpired:
                 p.kill()
                 out, err = "", ""
             rc, err = None, (err or "") + f"\n(timed out after {timeout} s)"
@@ -151,11 +126,7 @@ def _tail(out, err, n=300):
     return (txt[-1] if txt else "")[:n]
 
 
-# ---- assets -------------------------------------------------------------------
-
 def make_resolver(scenario_dir, run_dir):
-    """Template path resolver: absolute as-is; relative against the scenario's
-    directory, else the copy saved in the run dir (assets/...)."""
     def resolve(rel):
         if os.path.isabs(rel):
             return rel
@@ -181,8 +152,6 @@ def save_scenario(path, doc, run_dir):
     return missing
 
 
-# ---- the run ------------------------------------------------------------------
-
 class Runner:
     def __init__(self, scenario_path, runs_dir=None, profiles_dir=None, down=False, serve_timeout=30.0):
         self.path = os.path.abspath(scenario_path)
@@ -195,19 +164,18 @@ class Runner:
         os.makedirs(self.run_dir)
         os.makedirs(os.path.join(self.run_dir, "frames"), exist_ok=True)
         self.down, self.serve_timeout = down, serve_timeout
-        self.errors = []          # runner-level errors (boot, setup, actions, ...)
-        self.steps = []           # timeline rows
+        self.errors = []
+        self.steps = []
         self.skipped = []
         self.serve = None
         self.serve_id = f"{utc_stamp()}-{os.getpid()}"
         self.recording = False
-        self.record_attempted = False   # record start was run (it may have started the recorder)
-        self.traceback = None     # an unexpected exception's, if any
-        self.terminated = False   # a SIGTERM arrived
-        self._raise_on_term = False   # only while boot..cover_tail runs: never into cleanup or checks
+        self.record_attempted = False
+        self.traceback = None
+        self.terminated = False
+        self._raise_on_term = False
         self.actions_path = os.path.join(self.run_dir, "actions.jsonl")
 
-    # -- bookkeeping
     def error(self, msg):
         self.errors.append(msg)
         say(f"ERROR: {msg}")
@@ -221,7 +189,6 @@ class Runner:
             "traceback": self.traceback,
         })
 
-    # -- phases
     def boot(self):
         snap = self.doc.get("snapshot")
         say(f"restore {snap or '(profile default snapshot)'}")
@@ -233,7 +200,6 @@ class Runner:
             raise RunError(f"guest ssh not reachable after restore: {_tail(out, err)}")
 
     def precheck(self):
-        """Right before recording, after [guest] and [[setup]] (either could move the cursor plane)."""
         rc, out, err = self.vm.run("ssh", "qa-cursor-plane", timeout=60)
         say(f"precheck qa-cursor-plane: {out.strip() or err.strip()} (exit {rc})")
         if rc != 0:
@@ -283,13 +249,10 @@ class Runner:
         if rc not in (0, None):
             say(f"hyprhands serve exited {rc} (see hyprhands-serve.log)")
         if self.serve.killed:
-            # Killing the host side drops ssh; make sure the guest side is gone too: the pid
-            # the wrapper recorded, and only while it still carries this run's marker.
             say("hyprhands serve had to be killed; killing its recorded pid in the guest")
             self.vm.run("session", "sh", "-c", SERVE_KILL, self.serve_id, timeout=60)
 
     def lead_in_s(self):
-        """Record this long before step 1, so its most negative `at` has frames."""
         lo = min((S.at_bounds(e["at"])[0] for st in self.doc["step"] for e in st.get("expect", [])), default=0)
         return max(0.3, -lo / 1e9 + 0.1)
 
@@ -311,7 +274,6 @@ class Runner:
         if rc != 0:
             self.error(f"record stop failed: {_tail(out, err)}")
 
-    # -- steps
     def _last_action(self, step_id):
         hits = [a for a in load_jsonl(self.actions_path) if a.get("step") == step_id]
         return hits[-1] if hits else None
@@ -322,8 +284,6 @@ class Runner:
         t1 = time.monotonic_ns()
         a = self._last_action(st["id"])
         if a is None:
-            # The vmkit command does not stamp itself (e.g. `shot`): stamp it here, so the
-            # step still has an anchor, from the subprocess's start and exit.
             a = {"t": wall(), "cmd": kind, "args": detail, "t_send": t0, "t_ack": t1, "ok": rc == 0, "step": st["id"]}
             if rc != 0:
                 a["error"] = f"exit {rc}: {_tail(out, err)}"
@@ -403,7 +363,6 @@ class Runner:
                 break
 
     def cover_tail(self):
-        """Keep recording until every expectation's window has frames after it."""
         need = 0
         by_id = {r["step"]: r for r in self.steps}
         for st in self.doc["step"]:
@@ -456,14 +415,14 @@ class Runner:
                 self.run_steps()
                 self.cover_tail()
             finally:
-                self._raise_on_term = False   # from here a SIGTERM is only noted: cleanup and results complete
+                self._raise_on_term = False
         except RunError as e:
             self.error(str(e))
         except KeyboardInterrupt:
             self.error("interrupted")
         except Terminated:
             self._note_terminated()
-        except Exception as e:   # a runner bug: still an error run (exit 2) with results.json
+        except Exception as e:
             self.traceback = traceback.format_exc()
             self.vm.log(f"unexpected error:\n{self.traceback}")
             self.error(f"unexpected error: {type(e).__name__}: {e} (traceback in run.json)")
@@ -473,7 +432,7 @@ class Runner:
             self._note_terminated()
             self.save_state()
         code = evaluate(self.run_dir, self.doc, self.sdir, self.vm)
-        if self._note_terminated():   # arrived during the checks: amend what evaluate wrote
+        if self._note_terminated():
             self.save_state()
             path = os.path.join(self.run_dir, "results.json")
             res = json.load(open(path))
@@ -488,10 +447,7 @@ class Runner:
         return code
 
 
-# ---- checks, frames, results, report (shared by run and check) ----------------
-
 def name_frames(run_dir, checks):
-    """Hardlink every frame a check used to frames/<step>-<k>-<ms>.png."""
     fdir = os.path.join(run_dir, "frames")
     for f in os.listdir(fdir) if os.path.isdir(fdir) else []:
         if f.endswith(".png") and not FRAME_FILE.match(f):
@@ -533,8 +489,6 @@ def timing_block(run_dir):
 
 
 def evaluate(run_dir, doc, scenario_dir, vm):
-    """Translate expectations, run `vm check batch`, name frames, write results.json
-    and report.html. Returns the exit code."""
     state = {}
     try:
         with open(os.path.join(run_dir, "run.json")) as f:
@@ -556,7 +510,7 @@ def evaluate(run_dir, doc, scenario_dir, vm):
         if batch:
             say(f"checking {len(batch)} expectation(s)")
             try:
-                os.unlink(out_path)   # never read back a previous run's results
+                os.unlink(out_path)
             except FileNotFoundError:
                 pass
             rc, out, err = vm.run("check", "batch", exp_path, "--run", run_dir, "-o", out_path, timeout=3600)
@@ -576,7 +530,6 @@ def evaluate(run_dir, doc, scenario_dir, vm):
                     checks.append({"id": b["id"], "check": b["check"], "at": b["at"], "anchor": b["anchor"],
                                    "not": bool(b.get("not")), "action": b["action"], "frames": [],
                                    "status": "error", "error": "no result from vmkit check batch"})
-    # Expectations of steps that never ran: error rows (not sent to vmkit).
     for st in doc["step"]:
         if st["id"] in performed:
             continue
@@ -630,7 +583,6 @@ def evaluate(run_dir, doc, scenario_dir, vm):
 
 
 def check_run(run_dir, scenario_path=None, profiles_dir=None):
-    """`hypr-qa check RUN_DIR`: re-run only the checks against the recording."""
     run_dir = os.path.abspath(run_dir)
     path = os.path.abspath(scenario_path or os.path.join(run_dir, "scenario.toml"))
     doc = S.load(path)

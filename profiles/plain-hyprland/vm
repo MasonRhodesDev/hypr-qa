@@ -1,25 +1,10 @@
 #!/usr/bin/env bash
-# vm — drive the plain-hyprland guest through vmkit with this profile's flags.
-#
-#   vm up                  boot (headless, VNC :32, ssh 2232), niced, ionice class $HQA_IONICE_CLASS
-#   vm restore [NAME]      boot if needed, then load snapshot NAME (session-ready)
-#   vm snapshot NAME       save a snapshot (internal, in the overlay)
-#   vm snapshots           list snapshots (HMP `info snapshots`, or qemu-img if down)
-#   vm session CMD...      run CMD in the guest's Hyprland session (qa-session)
-#   vm down                power off
-#   vm <anything else>     passed to vmkit (shot, find, keys, type, wait, ssh, xexec, ...)
-#
-# Every boot uses the same device set (overlay + seed ISO): loadvm requires the
-# block devices present at savevm time, so never boot this overlay without it.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=profile.env
 . "${HQA_PROFILE_ENV:-$HERE/profile.env}"
 
-# Head flags are passed only for a multi-head guest, so a single-head profile still
-# runs against a vmkit that predates them. GPU_MODES is one WxH per head, comma
-# separated; vmkit enables and sizes every head at `up`.
 HEADS_ARGS=()
 if [ "${HEADS:-1}" -gt 1 ]; then
     HEADS_ARGS=(--gpu-heads "$HEADS")
@@ -35,9 +20,6 @@ vk() {
         "$@"
 }
 
-# vmkit's snapshot/restore send savevm/loadvm as QMP commands, which modern
-# QEMU does not have (they are HMP-only). Wrap them in human-monitor-command.
-# HMP reports errors as text inside "return", so check the text as well.
 hmp() {
     local line="$1" out
     out=$(vk qmp "$(python3 -c 'import json,sys; print(json.dumps({"execute":"human-monitor-command","arguments":{"command-line":sys.argv[1]}}))' "$line")") || return 1
@@ -49,22 +31,18 @@ sys.stdout.write(o.get("return",""))' "$out"
 
 qmp_alive() { [ -S "$VMKIT_DIR/qmp.sock" ] && vk qmp '{"execute":"query-status"}' >/dev/null 2>&1; }
 
-has_snapshot() {  # has_snapshot NAME  (VM must be up)
+has_snapshot() {
     hmp "info snapshots" | awk 'NR>2{print $2}' | grep -qx "$1"
 }
 
 cmd_up() {
     if qmp_alive; then echo "already up (ssh $SSH_PORT, vnc 127.0.0.1:$((5900 + VNC_DISPLAY)))"; return 0; fi
-    # Refuse to boot if something else holds our ssh port: every later ssh
-    # would silently talk to that other guest.
     if ss -ltn 2>/dev/null | grep -q "127.0.0.1:$SSH_PORT "; then
         echo "vm: 127.0.0.1:$SSH_PORT is held by another process; not booting" >&2; return 1
     fi
     [ -f "$OVERLAY" ] || { echo "vm: no overlay at $OVERLAY; run build first" >&2; return 1; }
     [ -f "$SEED" ] || { echo "vm: no seed ISO at $SEED; run build first" >&2; return 1; }
     mkdir -p "$VMKIT_DIR"
-    # vmkit backgrounds qemu; never pipe its stdout (qemu would hold the pipe).
-    # setsid detaches qemu from this shell/ssh session; the ionice class is inherited.
     setsid -w nice -n 19 ionice -c "$HQA_IONICE_CLASS" "$VMKIT" --ionice "$HQA_IONICE_CLASS" --overlay "$OVERLAY" --cidata "$SEED" --dir "$VMKIT_DIR" \
         --ssh-port "$SSH_PORT" --ssh-user "$QA_USER" --ssh-key "$SSH_KEY" \
         --mem "$MEM" --smp "$SMP" --view "vnc:$VNC_DISPLAY" \
@@ -72,16 +50,12 @@ cmd_up() {
         >"$VMKIT_DIR/up.log" 2>&1 </dev/null
     cat "$VMKIT_DIR/up.log"
     local i
-    # Up to 60 s: on a busy host qemu can take well over 10 s to open its QMP socket.
     for i in $(seq 1 300); do qmp_alive && return 0; sleep 0.2; done
     echo "vm: qemu did not come up; see $VMKIT_DIR/up.log" >&2; return 1
 }
 
 cmd_snapshot() {
     local name="${1:?vm snapshot NAME}" out
-    # A large RAM image can outlast vmkit's 30 s QMP socket timeout; savevm
-    # still completes inside QEMU, so confirm by listing instead of trusting
-    # the client's exit code.
     out=$(hmp "savevm $name" 2>&1) || true
     if [ -n "$out" ] && ! has_snapshot "$name" 2>/dev/null; then
         echo "vm: savevm $name: $out" >&2
@@ -94,10 +68,6 @@ cmd_snapshot() {
 cmd_restore() {
     local name="${1:-$SNAPSHOT}" out
     cmd_up
-    # Like savevm, a large RAM image can outlast vmkit's 30 s QMP socket timeout
-    # on a busy host. QMP runs one command at a time, so after a client timeout
-    # the load is still running: wait (up to 5 min) until the monitor answers
-    # again, which is when loadvm has finished.
     if out=$(hmp "loadvm $name" 2>&1); then
         if [ -n "$out" ]; then echo "vm: loadvm $name: $out" >&2; return 1; fi
     elif printf '%s' "$out" | grep -q 'TimeoutError\|timed out'; then
@@ -108,9 +78,6 @@ cmd_restore() {
         echo "vm: loadvm $name failed: $out" >&2; return 1
     fi
     echo "restored $name"
-    # The guest clock resumes at snapshot time; the emulated RTC follows the
-    # host, so resync from it (best effort). Without VMKIT_STEP: a `restore` step
-    # must not be stamped by this ssh (it would anchor after the loadvm).
     (unset VMKIT_STEP; vk ssh 'sudo hwclock --hctosys') >/dev/null 2>&1 || true
 }
 
@@ -125,7 +92,6 @@ case "$cmd" in
     snapshot)  cmd_snapshot "$@" ;;
     snapshots) cmd_snapshots ;;
     session)   [ $# -gt 0 ] || { echo "usage: vm session CMD..." >&2; exit 2; }
-               # ssh joins argv with spaces; quote each arg so it survives.
                vk ssh "qa-session $(printf '%q ' "$@")" ;;
     hmp)       hmp "$*"; echo ;;
     env)       echo "overlay=$OVERLAY seed=$SEED dir=$VMKIT_DIR ssh=127.0.0.1:$SSH_PORT vnc=127.0.0.1:$((5900 + VNC_DISPLAY))" ;;

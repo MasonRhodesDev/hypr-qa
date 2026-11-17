@@ -1,4 +1,3 @@
-"""profiles/plain-hyprland/check-pointer on synthetic screendumps and Xcursor files."""
 import os
 import struct
 import subprocess
@@ -13,7 +12,6 @@ W, H = 120, 90
 
 
 def xcursor(images):
-    """images: [(nominal, w, h, xhot, yhot, [argb...])] -> Xcursor file bytes"""
     head = struct.pack("<4sIII", b"Xcur", 16, 0x10000, len(images))
     off = 16 + 12 * len(images)
     toc, body = b"", b""
@@ -24,7 +22,6 @@ def xcursor(images):
 
 
 def arrow(w=7, h=11):
-    """a right-angled white triangle with a black 1 px edge, premultiplied ARGB"""
     px = []
     for y in range(h):
         for x in range(w):
@@ -47,7 +44,6 @@ def paint(canvas, left, top, w, h, px):
 
 
 def png(rows):
-    """8-bit RGB PNG, cycling through all five filter types"""
     raw, prev = b"", bytes(W * 3)
     for y, row in enumerate(rows):
         line = bytes(v for p in row for v in p)
@@ -113,7 +109,7 @@ class CheckPointer(unittest.TestCase):
 
     def test_the_hyprland_fallback_shape_fails_and_is_named(self):
         c = self.canvas()
-        for j in range(31):                      # a 25x31 blob at hotspot - (3, 2)
+        for j in range(31):
             for i in range(25):
                 c[40 - 2 + j][50 - 3 + i] = (200, 200, 200)
         r = self.run_check(self.write("s.png", png(c)))
@@ -128,7 +124,7 @@ class CheckPointer(unittest.TestCase):
 
     def test_another_theme_pointer_fails(self):
         c = self.canvas()
-        other = [0xFFFF0000] * (7 * 11)          # a red block, same size and hotspot
+        other = [0xFFFF0000] * (7 * 11)
         paint(c, 50 - 1, 40 - 2, 7, 11, other)
         r = self.run_check(self.write("s.png", png(c)))
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)

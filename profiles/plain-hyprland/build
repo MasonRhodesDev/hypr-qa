@@ -1,21 +1,4 @@
 #!/usr/bin/env bash
-# build — produce the plain-hyprland guest from scratch on the KVM host.
-#
-#   profiles/plain-hyprland/build
-#
-# 1. cache the newest Arch Linux cloud image (sha256-verified) under
-#    $BASE_DIR; later builds reuse it until a newer one is published
-# 2. create a fresh per-profile qcow2 overlay on it ($OVERLAY)
-# 3. build the cloud-init NoCloud seed ISO ($SEED) with xorriso
-# 4. first boot via `vmkit up`: cloud-init creates user qa and starts the
-#    provisioning service (full upgrade, hyprland/foot/fonts/greetd, config)
-# 5. reboot into greetd autologin -> Hyprland, wait for the session
-# 6. check the session (1280x800, no config errors, the pointer is the
-#    cursor theme's), let the screen settle,
-#    save the `session-ready` snapshot, shut down
-#
-# Destroys any previous overlay (and its snapshots); keeps cached base images.
-# Run heavy: everything here is nice 19 at ionice class $HQA_IONICE_CLASS (profile.env).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -26,7 +9,7 @@ VM="${HQA_VM:-$HERE/vm}"
 T0=$(date +%s)
 declare -a TIMINGS=()
 phase_start=$T0
-phase() {  # phase "name" — close the previous phase's timing and announce the next
+phase() {
     local now; now=$(date +%s)
     [ -n "${cur_phase:-}" ] && TIMINGS+=("$(printf '%-22s %4ss' "$cur_phase" $((now - phase_start)))")
     cur_phase="$1"; phase_start=$now
@@ -47,12 +30,10 @@ done
 [ -x "$VMKIT" ] || die "vmkit not found at $VMKIT (set VMKIT=)"
 [ -f "$SSH_PUB" ] || die "no ssh pubkey at $SSH_PUB"
 
-# Refuse to clobber a running guest of this profile.
 if [ -S "$VMKIT_DIR/qmp.sock" ] && "$VM" qmp '{"execute":"query-status"}' >/dev/null 2>&1; then
     die "plain-hyprland is running; '$VM down' first"
 fi
 
-# ---- 1. base image ----------------------------------------------------------
 phase "base image"
 mkdir -p "$BASE_DIR" "$PROFILE_DIR"
 latest=$(curl -fsSL "$ARCH_IMAGES_URL/" \
@@ -70,10 +51,9 @@ else
     got=$(nice -n 19 ionice -c "$HQA_IONICE_CLASS" sha256sum "$BASE.partial" | awk '{print $1}')
     [ "$got" = "$want" ] || { rm -f "$BASE.partial"; die "sha256 mismatch for $latest"; }
     mv "$BASE.partial" "$BASE"
-    chmod a-w "$BASE"   # overlays point at it; it must never change
+    chmod a-w "$BASE"
 fi
 
-# ---- 2. overlay ---------------------------------------------------------------
 phase "overlay"
 rm -rf "$VMKIT_DIR"
 rm -f "$OVERLAY"
@@ -81,12 +61,10 @@ qemu-img create -q -f qcow2 -F qcow2 -b "$BASE" "$OVERLAY"
 qemu-img resize -q "$OVERLAY" "$DISK_SIZE"
 echo "   $OVERLAY -> $(basename "$BASE") ($DISK_SIZE)"
 
-# ---- 3. seed ISO ----------------------------------------------------------------
 phase "seed iso"
 seed_dir="$PROFILE_DIR/seed"
 rm -rf "$seed_dir"; mkdir -p "$seed_dir"
 b64() { base64 -w0 "$HERE/files/$1"; }
-# A derived profile's extras (see profile.env); an absent one is an empty script/list.
 xb64() { if [ -n "$HQA_EXTRA_DIR" ] && [ -f "$HQA_EXTRA_DIR/$1" ]; then base64 -w0 "$HQA_EXTRA_DIR/$1"; else printf '# none\n' | base64 -w0; fi; }
 python3 - "$HERE/user-data.tmpl" "$seed_dir/user-data" \
     "@SSH_PUBKEY@=$(tr -d '\n' <"$SSH_PUB")" \
@@ -113,7 +91,6 @@ for s in subs:
 open(dst, "w").write(text)
 PY
 grep -q '@[A-Z_]*@' "$seed_dir/user-data" && die "unfilled placeholder in user-data"
-# Stable per build: cloud-init treats a new instance-id as a new machine.
 cat >"$seed_dir/meta-data" <<EOF
 instance-id: $PROFILE-$(date -u +%Y%m%d%H%M%S)
 local-hostname: $PROFILE
@@ -122,14 +99,13 @@ rm -f "$SEED"
 (cd "$seed_dir" && xorriso -as mkisofs -quiet -V cidata -J -r -o "$SEED" user-data meta-data)
 echo "   $SEED"
 
-# ---- 4. first boot + provisioning -------------------------------------------------
 phase "first boot to ssh"
 "$VM" up
 "$VM" wait ssh 300 || die "ssh never came up"
 
 phase "provisioning"
 st=none
-for _ in $(seq 1 360); do   # up to 30 min (full upgrade + install)
+for _ in $(seq 1 360); do
     st=$("$VM" ssh 'cat /var/lib/hypr-qa/status 2>/dev/null || echo none' 2>/dev/null || echo unreachable)
     case "$st" in
         ok) break ;;
@@ -141,9 +117,6 @@ done
 [ "$st" = ok ] || { "$VM" ssh 'sudo tail -n 40 /var/log/hypr-qa-provision.log' >&2 || true; die "provisioning timed out (status=$st)"; }
 "$VM" ssh 'cloud-init status --wait >/dev/null 2>&1; cloud-init status; grep "== installed" /var/log/hypr-qa-provision.log' || true
 
-# ---- 5. reboot into the autologin session -----------------------------------------
-# Reboot rather than start greetd in place: the full upgrade may have replaced
-# the kernel, and the snapshot should hold a normal boot.
 phase "reboot to session"
 "$VM" ssh 'sudo systemctl reboot' >/dev/null 2>&1 || true
 for _ in $(seq 1 30); do "$VM" ssh true >/dev/null 2>&1 || break; sleep 1; done
@@ -153,7 +126,6 @@ phase "ssh to session"
     || { "$VM" ssh 'sudo journalctl -b -u greetd --no-pager | tail -n 30' >&2 || true; die "no Hyprland process"; }
 "$VM" wait exec 'qa-session hyprctl monitors' 120 || die "hyprctl never answered in the session"
 
-# ---- 6. checks, settle, snapshot --------------------------------------------------
 phase "session checks"
 mon=$("$VM" session hyprctl -j monitors)
 echo "$mon" | python3 -c '
@@ -176,7 +148,6 @@ case "$errs" in
     *) printf '%s\n' "$errs" >&2; die "Hyprland reports config errors" ;;
 esac
 "$VM" session hyprctl version | head -n1 | sed 's/^/   /'
-# Authorization prompts need the session's polkit agent and AccountsService.
 "$VM" wait exec 'pgrep -u qa -f polkit-gnome-authentication-agent-1' 30 >/dev/null \
     || die "the polkit agent (polkit-gnome) is not running in the session"
 "$VM" ssh 'busctl --system call org.freedesktop.Accounts /org/freedesktop/Accounts org.freedesktop.Accounts FindUserByName s qa' \
@@ -185,20 +156,14 @@ for opt in animations:enabled misc:disable_hyprland_logo misc:disable_splash_ren
            ecosystem:no_update_news ecosystem:no_donation_nag; do
     echo "   $opt: $("$VM" session hyprctl -j getoption "$opt" | python3 -c 'import json,sys; o=json.load(sys.stdin); print({k:v for k,v in o.items() if k!="option"})')"
 done
-# Pointer must be composited into frames (QMP screendump omits a hardware
-# cursor plane): move it, then check the DRM cursor plane is unused.
 "$VM" move 640 400 >/dev/null
 "$VM" ssh qa-cursor-plane | sed 's/^/   /' || die "hardware cursor plane in use: the pointer would be missing from frames"
-# USB input must not runtime-suspend (adds ~100 ms to the next key press).
 sleep 6
 usb=$("$VM" ssh 'for d in /sys/bus/usb/devices/*; do [ -f "$d/product" ] && echo "$(cat "$d/product"): $(cat "$d/power/runtime_status")"; done; true')
 printf '%s\n' "$usb" | sed 's/^/   usb /'
 printf '%s\n' "$usb" | grep -q 'Keyboard: active$' || die "USB keyboard is not runtime-active after 6 s idle"
 ! printf '%s\n' "$usb" | grep -q ': suspended$' || die "a USB device runtime-suspended despite the udev rule"
 if [ "$POINTER_CHECK" = 1 ]; then
-# The pointer must be the session theme's left_ptr, not Hyprland's built-in
-# fallback (drawn when no cursor theme loads): the env clients inherit, then a
-# screendump at a known position against the theme's own image.
 r=$("$VM" session hyprctl dispatch 'hl.dsp.exec_cmd("printenv XCURSOR_THEME XCURSOR_SIZE >/tmp/hypr-qa-xcursor-env")')
 [ "$r" = ok ] || die "hyprctl dispatch exec_cmd replied: $r"
 sleep 1
@@ -224,7 +189,7 @@ phase "snapshot"
 "$VM" snapshot "$SNAPSHOT" || die "snapshot failed"
 
 phase "shutdown"
-pid=$(cat "$VMKIT_DIR/qemu.pid" 2>/dev/null || true)   # qemu removes it on exit
+pid=$(cat "$VMKIT_DIR/qemu.pid" 2>/dev/null || true)
 "$VM" down >/dev/null
 for _ in $(seq 1 60); do [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || break; sleep 1; done
 [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null || die "qemu (pid $pid) still running after down"
